@@ -1,0 +1,44 @@
+{
+    "account": {
+      "username": "Hu9527aa",
+      "password": "Hu1464263252"
+    },
+    "captcha": {
+      "url": "http://upload.chaojiying.net/Upload/Processing.php",
+      "username": "1464263252",
+      "password": "hu1464263252",
+      "soft_id": "968142",
+      "code_type": 1004
+    },
+    "settings": {
+      "headless": false,
+      "multi_process": 6,
+      "progress_file": "upload_progress.json",
+      "product_name": "碗盘架",
+      "min_carousel_folders": 4,
+      "min_size_folders": 1,
+      "product_variants": 1,
+      "generate_mode": "multiple"
+    },
+    "excel": {
+      "fixed_data": "固定数据.xlsx",
+      "image_urls": "图片URL.xlsx",
+      "product_titles": "产品标题.xlsx",
+      "category_data": "类目数据.xlsx",
+      "template_path": "product_导入数据.xlsx"
+    },
+    "folders": {
+      "carousel_folders": ["1", "2", "3", "4", "6"],
+      "size_folders": "尺寸图",
+      "preview_folders": ["预览图1[通用黑]"],
+      "goods_folders": ["5"],
+      "material_folders": ["产品素材图"],
+      "outerbox_folders": ["外包装图"]
+    },
+    "image_validation": {
+      "min_width": 800,
+      "min_height": 800,
+      "allowed_formats": ["jpg", "png", "jpeg"]
+    }
+  }
+  

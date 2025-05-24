@@ -1,0 +1,26 @@
+module.exports = {
+    compact: true,
+    controlFlowFlattening: true,
+    controlFlowFlatteningThreshold: 0.75,
+    deadCodeInjection: true,
+    deadCodeInjectionThreshold: 0.4,
+    debugProtection: true,
+    debugProtectionInterval: true,
+    disableConsoleOutput: true,
+    identifierNamesGenerator: 'hexadecimal',
+    log: false,
+    numbersToExpressions: true,
+    renameGlobals: false,
+    selfDefending: true,
+    simplify: true,
+    splitStrings: true,
+    splitStringsChunkLength: 5,
+    stringArray: true,
+    stringArrayEncoding: ['base64'],
+    stringArrayThreshold: 0.8,
+    stringArrayWrappersCount: 5,
+    stringArrayWrappersType: 'function',
+    transformObjectKeys: true,
+    unicodeEscapeSequence: false
+  };
+  
