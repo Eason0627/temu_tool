@@ -1,10 +1,15 @@
 <template>
-  <div @click="dialogVisible = true" class="initBtn">
+  <div @click="handleOpen" class="initBtn">
     <div style="display: flex; justify-content: center; align-items: center">
       <el-icon :size="20"><Plus /></el-icon><span>初始化项目</span>
     </div>
   </div>
-  <el-dialog v-model="dialogVisible" title="项目配置" width="600px">
+  <el-dialog
+    v-model="dialogVisible"
+    @close="handleClose"
+    title="项目配置"
+    width="600px"
+  >
     <el-form label-width="120px" :model="form">
       <!-- 项目路径 -->
       <el-form-item label="项目路径：" required>
@@ -75,7 +80,7 @@
         </el-row>
       </el-form-item>
       <!-- 预览图目录区 -->
-      <el-form-item label="预览图目录：" v-show="previews.length > 0">
+      <el-form-item label="预览图目录：" v-show="previews.length">
         <div
           v-for="(item, index) in previews"
           :key="item.id"
@@ -114,7 +119,7 @@
     </el-form>
 
     <template #footer>
-      <el-button @click="dialogVisible = false">取消</el-button>
+      <el-button @click="handleClose">取消</el-button>
       <el-button type="primary" :loading="loading" @click="generateProject"
         >确认生成</el-button
       >
@@ -125,7 +130,8 @@
 <script setup lang="ts">
 import { ElMessage } from "element-plus";
 import { Plus } from "@element-plus/icons-vue";
-import { ref, reactive, watch } from "vue";
+import { ref, reactive, watch, nextTick } from "vue";
+import { size } from "lodash";
 
 interface CarouselItem {
   id: number;
@@ -138,26 +144,73 @@ interface PreviewItem {
 }
 // 弹窗状态
 const dialogVisible = ref(false);
+const standardProject = ref(false);
 // 项目名称
 const projectName = ref("");
 // 项目路径
 const basePath = ref("");
 // 初始轮播图目录
-const carousels = reactive<CarouselItem[]>([
-  { id: 1, order: 1 },
-  { id: 2, order: 2 },
-  { id: 3, order: 3 },
-  { id: 4, order: 4 },
-]);
+const carousels = ref<CarouselItem[]>();
 
 // 预览图目录
-const previews = reactive<PreviewItem[]>([]);
+const previews = ref<PreviewItem[]>([]);
 
 // 表单数据
 const form = reactive({
   specName: "",
 });
 const loading = ref(false);
+const emit = defineEmits(["project-created"]);
+
+const handleOpen = () => {
+  dialogVisible.value = true;
+  // 初始化数据
+  const projectData = localStorage.getItem("projectData");
+  if (projectData) {
+    const data = JSON.parse(projectData);
+    projectName.value = data.projectName;
+    basePath.value = data.basePath;
+    carousels.value = data.carousels;
+    previews.value = data.previews;
+    form.specName = "";
+  } else {
+    projectName.value = "";
+    basePath.value = "";
+    carousels.value = [
+      { id: 1, order: 1 },
+      { id: 2, order: 2 },
+      { id: 3, order: 3 },
+      { id: 4, order: 4 },
+    ];
+    previews.value = [];
+    form.specName = "";
+    standardProject.value = false;
+  }
+};
+
+const handleClose = () => {
+  dialogVisible.value = false;
+  // 存储本次操作数据
+  const projectData = {
+    projectName: projectName.value,
+    basePath: basePath.value,
+    carousels: carousels.value,
+    previews: previews.value,
+  };
+  localStorage.setItem("projectData", JSON.stringify(projectData));
+  // 重置数据
+  standardProject.value = false;
+  projectName.value = "";
+  basePath.value = "";
+  carousels.value = [
+    { id: 1, order: 1 },
+    { id: 2, order: 2 },
+    { id: 3, order: 3 },
+    { id: 4, order: 4 },
+  ];
+  previews.value = [];
+  form.specName = "";
+};
 // 选择项目路径
 const selectPath = async () => {
   try {
@@ -195,6 +248,44 @@ const selectPath = async () => {
         duration: 2000,
       });
     }
+    // 若用户选择的文件夹下已有标准项目文件夹, 则自动填充
+    await window.electronAPI.listDirectories(selectedPath).then((res) => {
+      if (res.length > 0) {
+        // 判断是否是标准项目文件夹
+        const sizeDir = res.find((dir) => dir.startsWith("尺寸图"));
+        const numDirs = res.filter((dir) => /^\d+$/.test(dir));
+        const previewDirs = res.filter((dir) => dir.startsWith("预览图"));
+
+        if (sizeDir && numDirs.length >= 4 && previewDirs.length >= 1) {
+          standardProject.value = true;
+          // 数字文件夹填充轮播图目录
+          carousels.value = [];
+          numDirs.forEach((dir) => {
+            carousels.value.push({
+              id: Date.now(),
+              order: parseInt(dir),
+            });
+          });
+          // 预览图开头文件夹填充预览图目录
+          previews.value = [];
+          previewDirs.forEach((dir) => {
+            previews.value.push({
+              id: Date.now(),
+              name: dir,
+            });
+          });
+          console.log(previews);
+
+          // 项目名称填充 提取选择的文件夹名称
+          projectName.value = selectedPath.split("\\").pop();
+
+          ElMessage.warning({
+            message: "已自动填充项目文件夹",
+            duration: 2000,
+          });
+        }
+      }
+    });
 
     // 更新路径状态
     basePath.value = selectedPath;
@@ -213,8 +304,8 @@ const selectPath = async () => {
 };
 // 添加轮播图目录
 const addCarousel = () => {
-  const nextOrder = Math.max(...carousels.map((c) => c.order)) + 1;
-  carousels.push({
+  const nextOrder = Math.max(...carousels.value.map((c) => c.order)) + 1;
+  carousels.value.push({
     id: Date.now(),
     order: nextOrder,
   });
@@ -222,21 +313,21 @@ const addCarousel = () => {
 
 // 删除轮播图目录
 const removeCarousel = (id: number) => {
-  const index = carousels.findIndex((c) => c.id === id);
+  const index = carousels.value.findIndex((c) => c.id === id);
   if (index !== -1) {
-    carousels.splice(index, 1);
+    carousels.value.splice(index, 1);
   }
   // 重排序号
-  carousels.forEach((c, index) => {
+  carousels.value.forEach((c, index) => {
     c.order = index + 1;
   });
 };
 
 // 添加预览图规格
 const addPreview = () => {
-  previews.push({
+  previews.value.push({
     id: Date.now(),
-    name: "预览图" + (previews.length + 1) + "[" + form.specName + "]",
+    name: "预览图" + (previews.value.length + 1) + "[" + form.specName + "]",
   });
   // 清空输入框
   form.specName = "";
@@ -244,12 +335,12 @@ const addPreview = () => {
 
 // 删除预览图规格
 const removePreview = (id: number) => {
-  const index = previews.findIndex((p) => p.id === id);
-  if (index !== -1 && previews.length > 1) {
-    previews.splice(index, 1);
+  const index = previews.value.findIndex((p) => p.id === id);
+  if (index !== -1 && previews.value.length > 1) {
+    previews.value.splice(index, 1);
   }
   // 重排序号
-  previews.forEach((p, index) => {
+  previews.value.forEach((p, index) => {
     p.name = "预览图" + (index + 1) + "[" + form.specName + "]";
   });
 };
@@ -259,25 +350,28 @@ const generateProject = async () => {
   loading.value = true;
   // 构建项目目录结构
   // 生成项目文件夹
-  const projectPath = basePath.value + "\\" + projectName.value;
-  await window.electronAPI.createDirectory(
-    basePath.value + "\\" + projectName.value
-  );
-  // 生成轮播图目录
-  carousels.forEach(async (c) => {
-    await window.electronAPI.createDirectory(projectPath + "\\" + c.order);
-  });
-  // 生成尺寸图目录
-  await window.electronAPI.createDirectory(projectPath + "\\尺寸图");
-  // 生成预览图目录
-  previews.forEach(async (p) => {
-    await window.electronAPI.createDirectory(projectPath + "\\" + p.name);
-  });
+
+  let projectPath = basePath.value + "\\" + projectName.value;
+  if (!standardProject.value) {
+    // 生成轮播图目录
+    carousels.value.forEach(async (c) => {
+      await window.electronAPI.createDirectory(projectPath + "\\" + c.order);
+    });
+    // 生成尺寸图目录
+    await window.electronAPI.createDirectory(projectPath + "\\尺寸图");
+    // 生成预览图目录
+    previews.value.forEach(async (p) => {
+      await window.electronAPI.createDirectory(projectPath + "\\" + p.name);
+    });
+  } else {
+    projectPath = basePath.value;
+  }
+
   // 检查是否生成成功
   const exists = await window.electronAPI.checkDirectoryExists(projectPath);
   if (exists) {
     // 遍历检查轮播图目录是否存在
-    for (let i = 1; i <= carousels.length; i++) {
+    for (let i = 1; i <= carousels.value.length; i++) {
       const carouselPath = projectPath + "\\" + i;
       const exists = await window.electronAPI.checkDirectoryExists(
         carouselPath
@@ -299,8 +393,8 @@ const generateProject = async () => {
       });
     }
     // 遍历检查预览图目录是否存在
-    for (let i = 0; i < previews.length; i++) {
-      const previewPath = projectPath + "\\" + previews[i].name;
+    for (let i = 0; i < previews.value.length; i++) {
+      const previewPath = projectPath + "\\" + previews.value[i].name;
       const exists = await window.electronAPI.checkDirectoryExists(previewPath);
       if (!exists) {
         ElMessage.error({
@@ -315,6 +409,8 @@ const generateProject = async () => {
       folderName: projectName.value,
       folderPath: projectPath,
       uploadedUrls: {},
+      isValid: true,
+      timestampDir: "",
     };
     const dirList = await window.electronAPI.listDirectories(projectPath);
     dirList.forEach((val) => {
@@ -322,8 +418,28 @@ const generateProject = async () => {
     });
     projectList.push(projectObj);
     await window.electronAPI.saveProjectList(JSON.stringify(projectList));
+
+    // 触发事件通知父组件
+    emit("project-created", {
+      folderName: projectName.value,
+      folderPath: projectPath,
+      uploadedUrls: projectObj.uploadedUrls,
+      isValid: true,
+      timestampDir: "",
+    });
     loading.value = false;
     dialogVisible.value = false;
+    standardProject.value = false;
+    projectName.value = "";
+    basePath.value = "";
+    carousels.value = [
+      { id: 1, order: 1 },
+      { id: 2, order: 2 },
+      { id: 3, order: 3 },
+      { id: 4, order: 4 },
+    ];
+    previews.value.splice(0, previews.value.length);
+
     ElMessage.success({
       message: `项目初始化成功: ${projectPath}`,
       duration: 1500,
@@ -341,6 +457,7 @@ const generateProject = async () => {
 
 .initBtn {
   display: inline-block;
+  height: 40px;
   padding: 10px 20px;
   margin-right: 10px;
   background-color: #409eff;
@@ -350,6 +467,7 @@ const generateProject = async () => {
   cursor: pointer;
   transition: background 0.2s ease;
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.4);
+  box-sizing: border-box;
   user-select: none;
 }
 .initBtn:hover {

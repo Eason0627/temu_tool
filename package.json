@@ -1,6 +1,6 @@
 {
   "name": "temu-toolbox",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "Temu工具箱 - 多功能Temu辅助工具集",
   "main": "electron/main/main.js",
   "scripts": {
@@ -23,6 +23,10 @@
     "release:linux": "npm run encrypt:assets && npm run obfuscate:code && npm run secure:linux",
     "direct:win": "node direct-build.js"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Eason0627/temu_tool.git"
+  },
   "dependencies": {
     "@element-plus/icons-vue": "^2.3.1",
     "@nut-tree/nut-js": "^3.1.2",
@@ -39,6 +43,8 @@
     "cors": "^2.8.5",
     "cross-env": "^7.0.3",
     "dotenv": "^16.5.0",
+    "electron-log": "^5.4.0",
+    "electron-updater": "^6.6.2",
     "electron-vite": "^3.1.0",
     "element-plus": "^2.9.10",
     "express": "^5.1.0",
@@ -64,6 +70,7 @@
     "@vitejs/plugin-vue": "^5.0.0",
     "bytenode": "^1.5.7",
     "electron": "^36.2.1",
+    "electron-updater": "^6.6.2",
     "electron-builder": "^24.6.4",
     "electron-rebuild": "^3.2.9",
     "electron-vite": "^2.0.0",
@@ -75,6 +82,13 @@
   "build": {
     "appId": "com.temu.toolbox",
     "productName": "Temu工具箱",
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Eason0627",
+        "repo": "temu_tool"
+      }
+    ],
     "asar": true,
     "asarUnpack": [],
     "files": [

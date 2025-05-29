@@ -25,6 +25,7 @@
               v-model="formData[attr.templatePid]"
               placeholder="请选择"
               clearable
+              filterable
               style="width: 300px"
               @change="
                 (val) => {
@@ -220,7 +221,7 @@ function isAttrVisible(attr) {
     !attr.showCondition ||
     (Array.isArray(attr.showCondition) &&
       attr.showCondition.some((cond) => {
-        const parentVal = formData[cond.parentReftemplatePid];
+        const parentVal = formData[cond.parentRefPid];
         const selected = Array.isArray(parentVal) ? parentVal : [parentVal];
         return selected.some((v) => cond.parentVids.includes(v));
       }));

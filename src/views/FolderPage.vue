@@ -1,77 +1,436 @@
 <template>
   <div class="project-table">
-    <el-card>
+    <el-row
+      style="
+        border-radius: 8px;
+        background: #fff;
+        box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
+      "
+    >
       <div
         style="
+          width: 100%;
+          padding: 20px;
           margin-bottom: 16px;
           display: flex;
+          flex-direction: column;
           justify-content: space-between;
         "
       >
-        <h2>📁 已保存项目列表</h2>
-        <el-button type="danger" plain @click="clearAllProjects"
-          >清空全部项目</el-button
-        >
+        <div class="title" style="font-size: 24px; font-weight: bolder">
+          📁 已保存项目列表
+          <div class="action-buttons" style="margin-top: 10px">
+            <el-row style="width: 100%">
+              <el-col :span="12">
+                <el-button
+                  color="#626aef"
+                  type="success"
+                  plain
+                  @click="uploadProject"
+                  >上传项目</el-button
+                >
+                <el-button
+                  color="#626aef"
+                  type="success"
+                  plain
+                  @click="downloadProject"
+                  >下载项目</el-button
+                >
+                <el-button type="primary" @click="exportProjects">
+                  <el-icon><Upload /></el-icon> 导出JSON
+                </el-button>
+                <el-button type="success" @click="showImportDialog">
+                  <el-icon><Download /></el-icon> 导入JSON
+                </el-button>
+              </el-col>
+              <el-col
+                :span="12"
+                style="display: flex; justify-content: end; flex-wrap: wrap"
+              >
+                <el-button @click="batchImportData" type="primary"
+                  >批量导入数据</el-button
+                >
+                <el-button type="danger" plain @click="clearAllProjects"
+                  >批量删除项目</el-button
+                >
+                <el-button @click="batchUploadImportExcel"
+                  >批量上传文档</el-button
+                >
+                <el-button @click="batchDownloadImportExcel"
+                  >批量下载文档</el-button
+                >
+              </el-col>
+            </el-row>
+          </div>
+        </div>
       </div>
-      <el-table :data="projectList" style="min-width: 960px; min-height: 500px">
-        <el-table-column label="项目名称" prop="folderName" align="center" />
-        <el-table-column
-          label="文件夹路径"
-          prop="folderPath"
-          show-overflow-tooltip
-          min-width="300px"
+      <el-row style="width: 100%">
+        <el-col :span="24">
+          <el-table
+            :data="pagedData"
+            height="460px"
+            max-height="460px"
+            @selection-change="handleSelectionChange"
+          >
+            <el-table-column type="selection" width="55" />
+            <el-table-column label="id" width="55" align="center">
+              <template #default="{ row, $index }">
+                {{ $index + 1 }}
+              </template>
+            </el-table-column>
+            <el-table-column
+              label="项目名称"
+              prop="folderName"
+              width="200px"
+              align="center"
+            />
+            <el-table-column
+              label="文件夹路径"
+              prop="folderPath"
+              show-overflow-tooltip
+              min-width="300px"
+              align="center"
+            >
+              <template #default="{ row }">
+                <span
+                  class="nowrap-text"
+                  :style="{ color: row.isValid ? '#67C23A' : '#F56C6C' }"
+                >
+                  {{
+                    row.isValid
+                      ? `✅ 有效：${row.folderPath}`
+                      : `❌ 已失效： ${row.folderPath}`
+                  }}
+                </span>
+              </template>
+            </el-table-column>
+            <el-table-column label="上传文件数" align="center">
+              <template #default="{ row }">
+                {{ Object.values(row.uploadedUrls || {}).flat().length }}
+              </template>
+            </el-table-column>
+            <el-table-column label="数据操作" min-width="200px" align="center">
+              <template #default="{ row }">
+                <el-tooltip
+                  effect="dark"
+                  content="生成导入文档 & 导入项目数据"
+                  placement="top"
+                >
+                  <el-button
+                    size="small"
+                    type="success"
+                    @click="importProjectData(row)"
+                  >
+                    <el-icon>
+                      <FolderAdd />
+                    </el-icon>
+                    <span>导入</span>
+                  </el-button>
+                </el-tooltip>
+                <el-tooltip
+                  effect="dark"
+                  content="上传导入文档"
+                  placement="top"
+                >
+                  <el-button
+                    size="small"
+                    type="default"
+                    @click="uploadExcel(row)"
+                  >
+                    <el-icon><Connection /></el-icon>
+                    <span>上传</span>
+                  </el-button>
+                </el-tooltip>
+                <el-tooltip
+                  effect="dark"
+                  content="下载导入文档"
+                  placement="top"
+                >
+                  <el-button
+                    size="small"
+                    type="default"
+                    @click="downloadExcel(row)"
+                  >
+                    <el-icon><Download /></el-icon>
+                    <span>下载</span>
+                  </el-button>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+            <el-table-column label="项目操作" min-width="200px" align="center">
+              <template #default="{ row, $index }">
+                <el-button
+                  size="small"
+                  type="primary"
+                  @click="changeFolderPath($index)"
+                >
+                  <el-icon><Edit /></el-icon>
+                  <span>更改路径</span>
+                </el-button>
+                <el-button
+                  size="small"
+                  type="danger"
+                  @click="removeProject($index)"
+                >
+                  <el-icon><Delete /></el-icon>
+                  <span> 删除 </span>
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-col>
+      </el-row>
+      <el-row>
+        <el-col :span="24" style="padding: 10px 20px">
+          <el-pagination
+            v-model:current-page="pagination.currentPage"
+            v-model:page-size="pagination.pageSize"
+            :page-sizes="[10, 20, 30, 50, 100, 200, 300, 400]"
+            layout="total, sizes, prev, pager, next, jumper"
+            :total="projectList.length"
+            @size-change="handleSizeChange"
+            @current-change="handleCurrentChange"
+          />
+        </el-col>
+      </el-row>
+    </el-row>
+  </div>
+
+  <!-- 导入项目对话框 -->
+  <el-dialog
+    v-model="importDialogVisible"
+    title="导入项目数据"
+    width="500px"
+    :close-on-click-modal="false"
+  >
+    <div class="import-dialog-content">
+      <el-upload
+        class="upload-demo"
+        drag
+        action=""
+        :auto-upload="false"
+        :on-change="handleFileChange"
+        :limit="1"
+        accept=".json"
+      >
+        <el-icon class="el-icon--upload"><upload-filled /></el-icon>
+        <div class="el-upload__text">拖拽文件到此处或 <em>点击上传</em></div>
+        <template #tip>
+          <div class="el-upload__tip">请上传JSON格式的项目数据文件</div>
+        </template>
+      </el-upload>
+
+      <div v-if="importPreview.length > 0" class="import-preview">
+        <h4>即将导入的项目：</h4>
+        <el-table :data="importPreview" style="width: 100%">
+          <el-table-column prop="folderName" label="项目名称" />
+          <el-table-column prop="fileCount" label="文件数量" />
+        </el-table>
+      </div>
+    </div>
+
+    <template #footer>
+      <span class="dialog-footer">
+        <el-button @click="importDialogVisible = false">取消</el-button>
+        <el-button
+          type="primary"
+          @click="importProjectsData"
+          :disabled="!importFile || importPreview.length === 0"
         >
+          确认导入
+        </el-button>
+      </span>
+    </template>
+  </el-dialog>
+  <!-- 批量导入对话框 -->
+  <el-dialog
+    v-model="batchDialogVisible"
+    title="批量导入项目数据"
+    width="80vw"
+    style="max-width: 1200px"
+    border
+  >
+    <template #default>
+      <el-row>
+        <el-col
+          :span="7"
+          style="
+            display: flex;
+            align-items: center;
+            min-width: 320px;
+            padding: 10px 0;
+            margin-left: auto;
+          "
+        >
+          <span style="margin-right: 20px">生成模式:</span>
+          <el-radio-group v-model="dialogForm.mode" @change="changeAllMode">
+            <el-tooltip content="每个链接图片都不重复" placement="top">
+              <el-radio label="single" value="single">Single</el-radio>
+            </el-tooltip>
+            <el-tooltip content="每个类目的图片都不重复" placement="top">
+              <el-radio label="multiple" value="multiple">Multiple</el-radio>
+            </el-tooltip>
+          </el-radio-group>
+          <el-button
+            size="small"
+            type="success"
+            style="margin-left: 10px"
+            @click="generateAll"
+            >全部生成</el-button
+          >
+        </el-col>
+      </el-row>
+      <!-- 表格渲染所选的批量导入数据 -->
+      <el-table
+        :data="selectedProjects"
+        align="center"
+        style="max-height: 500px; border-top: 1px solid #eee"
+        @selection-change="handleImportProject"
+      >
+        <el-table-column type="selection" width="55"></el-table-column>
+        <el-table-column prop="folderName" label="项目名称" align="center" />
+        <el-table-column
+          prop="files"
+          label="文件数量"
+          width="100"
+          align="center"
+        />
+        <el-table-column
+          prop="folderPath"
+          label="项目路径"
+          align="center"
+          show-overflow-tooltip
+        ></el-table-column>
+        <el-table-column label="生成模式" align="center">
           <template #default="{ row }">
-            <span
-              class="nowrap-text"
-              :style="{ color: row.isValid ? '#67C23A' : '#F56C6C' }"
-            >
-              {{
-                row.isValid
-                  ? `✅ 有效：${row.folderPath}`
-                  : `❌ 已失效： ${row.folderPath}`
-              }}
-            </span>
+            <el-radio-group @change="changeOnlyMode($event, row)">
+              <el-tooltip content="每个链接图片都不重复" placement="top">
+                <el-radio label="single" value="single">Single</el-radio>
+              </el-tooltip>
+              <el-tooltip content="每个类目的图片都不重复" placement="top">
+                <el-radio label="multiple" value="multiple">Multiple</el-radio>
+              </el-tooltip>
+            </el-radio-group>
           </template>
         </el-table-column>
-        <el-table-column label="上传文件数" align="center">
+        <el-table-column label="操作" align="center">
           <template #default="{ row }">
-            {{ Object.values(row.uploadedUrls || {}).flat().length }}
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" min-width="200px" align="center">
-          <template #default="{ row, $index }">
+            <el-button size="small" @click="exportExcel(row)"
+              >生成文档</el-button
+            >
             <el-button
               size="small"
-              type="success"
-              @click="importProjectData(row)"
+              @click="handleDialogConfirm(row)"
+              :loading="importLoading"
+              >预览数据</el-button
             >
-              <el-icon>
-                <Upload />
-              </el-icon>
-              <span>导入数据</span>
-            </el-button>
-            <el-button
-              size="small"
-              type="primary"
-              @click="changeFolderPath($index)"
-            >
-              <el-icon><Edit /></el-icon>
-              <span>更改路径</span>
-            </el-button>
-            <el-button
-              size="small"
-              type="danger"
-              @click="removeProject($index)"
-            >
-              <el-icon><Delete /></el-icon>
-              <span> 删除 </span>
-            </el-button>
           </template>
         </el-table-column>
       </el-table>
-    </el-card>
-  </div>
+    </template>
+    <template #footer>
+      <el-form
+        :model="dialogForm"
+        label-position="left"
+        label-width="100px"
+        style="padding: 50px"
+      >
+        <el-form-item label="选择账号">
+          <el-select
+            v-model="dialogForm.selectedAccount"
+            placeholder="请选择账号"
+            style="max-width: 300px"
+            @change="handleAccountChange"
+          >
+            <el-option label="请选择账号" :value="0"></el-option>
+            <el-option
+              v-for="(account, index) in accounts"
+              :key="index"
+              :label="account.username"
+              :value="index + 1"
+            />
+          </el-select>
+          <el-button
+            type="primary"
+            text
+            bg
+            style="margin-left: 10px"
+            @click="showAccountForm = !showAccountForm"
+          >
+            <span v-if="!showAccountForm">
+              <el-icon><ArrowDown /></el-icon>
+              <span> 展开 </span>
+            </span>
+            <span v-else>
+              <el-icon><ArrowUp /></el-icon>
+              <span> 收起 </span>
+            </span>
+          </el-button>
+        </el-form-item>
+
+        <el-row
+          v-show="showAccountForm"
+          style="
+            max-width: 500px;
+            padding: 10px;
+            margin-left: 100px;
+            background: #f3f3f3;
+          "
+        >
+          <el-col :span="9">
+            <el-form-item
+              label="账号"
+              label-width="40px"
+              style="margin-bottom: 0"
+            >
+              <el-input
+                v-model="newAccount.username"
+                placeholder="请输入账号"
+              />
+            </el-form-item>
+          </el-col>
+          <el-col :span="9" style="margin-left: 10px">
+            <el-form-item
+              label="密码"
+              label-width="40px"
+              style="margin-bottom: 0"
+            >
+              <el-input
+                v-model="newAccount.password"
+                placeholder="请输入密码"
+                show-password
+              />
+            </el-form-item>
+          </el-col>
+          <el-col :span="2" style="margin-left: 10px">
+            <el-button
+              type="success"
+              @click="handleLogin"
+              plain
+              :loading="loginLoading"
+              >登录</el-button
+            >
+          </el-col>
+        </el-row>
+        <el-row v-show="dialogForm.selectedAccount !== 0">
+          <el-divider>选择导入店铺</el-divider>
+
+          <el-table
+            :data="shopList"
+            border
+            @selection-change="(val: any) => (multipleSelection = val)"
+            style="width: 60%; margin: 0 auto"
+          >
+            <el-table-column type="selection" width="50" />
+            <el-table-column prop="id" label="店铺ID" />
+            <el-table-column prop="name" label="店铺名称" />
+          </el-table>
+        </el-row>
+      </el-form>
+      <el-button @click="batchDialogVisible = false">取消</el-button>
+      <el-button type="primary" @click="confirmBatchImport">确认导入</el-button>
+    </template>
+  </el-dialog>
   <el-dialog
     v-model="dialogVisible"
     title="导入设置"
@@ -129,12 +488,7 @@
 
       <el-row
         v-show="showAccountForm"
-        style="
-          width: 500px;
-          padding: 10px;
-          margin-left: 100px;
-          background: #f3f3f3;
-        "
+        style="padding: 10px; margin-left: 100px; background: #f3f3f3"
       >
         <el-col :span="9">
           <el-form-item
@@ -183,162 +537,80 @@
         </el-table>
       </el-row>
     </el-form>
+    <template #footer>
+      <el-button @click="dialogVisible = false">取消</el-button>
+      <el-button
+        type="primary"
+        :loading="batchImportLoading"
+        @click="handleDialogConfirm"
+        >预览数据</el-button
+      >
+    </template>
+  </el-dialog>
+  <!-- 修改预览表格部分 -->
+  <el-dialog
+    v-model="showPreviewTable"
+    title="数据预览"
+    width="80vw"
+    append-to-body
+    :close-on-click-modal="false"
+  >
+    <div v-if="previewData.length > 0">
+      <el-alert
+        title="请检查以下数据是否正确，确认无误后点击确认导入"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 15px"
+      />
 
-    <!-- 修改预览表格部分 -->
-    <el-dialog
-      v-model="showPreviewTable"
-      title="数据预览"
-      width="80vw"
-      append-to-body
-      :close-on-click-modal="false"
-    >
-      <div v-if="previewData.length > 0">
-        <el-alert
-          title="请检查以下数据是否正确，确认无误后点击确认导入"
-          type="warning"
-          :closable="false"
-          show-icon
-          style="margin-bottom: 15px"
-        />
+      <!-- 添加视图切换按钮 -->
+      <div style="margin-bottom: 15px">
+        <el-radio-group v-model="previewMode" size="small">
+          <el-radio-button label="original">原始数据视图</el-radio-button>
+          <el-radio-button label="grouped">产品分组视图</el-radio-button>
+        </el-radio-group>
+      </div>
 
-        <!-- 添加视图切换按钮 -->
-        <div style="margin-bottom: 15px">
-          <el-radio-group v-model="previewMode" size="small">
-            <el-radio-button label="original">原始数据视图</el-radio-button>
-            <el-radio-button label="grouped">产品分组视图</el-radio-button>
-          </el-radio-group>
-        </div>
-
-        <!-- 原始数据视图 -->
-        <div v-if="previewMode === 'original'">
-          <el-table
-            :data="previewData.slice(0, 100)"
-            border
-            style="width: 100%"
-            max-height="800px"
+      <!-- 原始数据视图 -->
+      <div v-if="previewMode === 'original'">
+        <el-table
+          :data="previewData.slice(0, 100)"
+          border
+          style="width: 100%"
+          max-height="800px"
+        >
+          <el-table-column
+            v-for="column in sortedColumns"
+            :key="column"
+            :prop="column"
+            :label="column"
+            min-width="120"
+            :width="column === '产品标题' ? '1000px' : '120px'"
+            align="center"
+            show-overflow-tooltip
           >
-            <el-table-column
-              v-for="column in sortedColumns"
-              :key="column"
-              :prop="column"
-              :label="column"
-              min-width="120"
-              :width="column === '产品标题' ? '1000px' : '120px'"
-              align="center"
-              show-overflow-tooltip
-            >
-              <!-- 自定义单元格内容 -->
-              <template #default="scope">
-                <!-- 如果是轮播图URL列表 -->
-                <template
-                  v-if="column === '轮播图' || column.includes('轮播图')"
+            <!-- 自定义单元格内容 -->
+            <template #default="scope">
+              <!-- 如果是轮播图URL列表 -->
+              <template v-if="column === '轮播图' || column.includes('轮播图')">
+                <div
+                  class="image-preview-cell"
+                  style="
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    margin: 5px;
+                    border-radius: 8px;
+                    overflow: hidden;
+                    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.5);
+                  "
                 >
-                  <div
-                    class="image-preview-cell"
-                    style="
-                      display: flex;
-                      justify-content: center;
-                      align-items: center;
-                      margin: 5px;
-                      border-radius: 8px;
-                      overflow: hidden;
-                      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.5);
-                    "
-                  >
-                    <el-image
-                      v-if="parseImageUrls(scope.row[column]).length > 0"
-                      :src="parseImageUrls(scope.row[column])[0]"
-                      :preview-src-list="parseImageUrls(scope.row[column])"
-                      @close="handleClose"
-                      fit="contain"
-                      style="width: 80px; height: 80px"
-                    >
-                      <template #error>
-                        <div class="image-error">
-                          <el-icon><Picture /></el-icon>
-                          <span>加载失败</span>
-                        </div>
-                      </template>
-                    </el-image>
-                    <div v-else class="image-error">
-                      <el-icon><Picture /></el-icon>
-                      <span>无图片</span>
-                    </div>
-                    <div class="image-count-badge">
-                      <el-badge
-                        :value="parseImageUrls(scope.row[column]).length"
-                        type="primary"
-                      />
-                    </div>
-                  </div>
-                </template>
-                <!-- 如果是单张图片URL -->
-                <template v-else-if="isImageUrl(scope.row[column])">
-                  <div
-                    class="box"
-                    style="
-                      display: flex;
-                      justify-content: center;
-                      align-items: center;
-                      margin: 5px;
-                      border-radius: 8px;
-                      overflow: hidden;
-                      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.5);
-                    "
-                  >
-                    <el-image
-                      :src="scope.row[column]"
-                      :preview-src-list="[scope.row[column]]"
-                      fit="contain"
-                      @close="handleClose"
-                      style="width: 80px; height: 80px; border-radius: 8px"
-                    >
-                      <template #error>
-                        <div class="image-error">
-                          <el-icon><Picture /></el-icon>
-                          <span>加载失败</span>
-                        </div>
-                      </template>
-                    </el-image>
-                  </div>
-                </template>
-
-                <!-- 其他类型数据正常显示 -->
-                <template v-else>
-                  {{ scope.row[column] }}
-                </template>
-              </template>
-            </el-table-column>
-          </el-table>
-        </div>
-
-        <!-- 分组视图 - 新增 -->
-        <div v-else>
-          <el-table
-            :data="groupedPreviewData"
-            border
-            style="width: 100%"
-            max-height="800px"
-          >
-            <!-- 公共字段列 -->
-            <el-table-column
-              label="产品标题"
-              min-width="400"
-              show-overflow-tooltip
-            >
-              <template #default="scope">
-                {{ scope.row.产品标题 }}
-              </template>
-            </el-table-column>
-
-            <el-table-column label="轮播图" width="120" align="center">
-              <template #default="scope">
-                <div class="image-preview-cell">
                   <el-image
-                    v-if="parseImageUrls(scope.row.轮播图).length > 0"
-                    :src="parseImageUrls(scope.row.轮播图)[0]"
+                    v-if="parseImageUrls(scope.row[column]).length > 0"
+                    :src="parseImageUrls(scope.row[column])[0]"
+                    :preview-src-list="parseImageUrls(scope.row[column])"
                     @close="handleClose"
-                    :preview-src-list="parseImageUrls(scope.row.轮播图)"
                     fit="contain"
                     style="width: 80px; height: 80px"
                   >
@@ -355,116 +627,229 @@
                   </div>
                   <div class="image-count-badge">
                     <el-badge
-                      :value="parseImageUrls(scope.row.轮播图).length"
+                      :value="parseImageUrls(scope.row[column]).length"
                       type="primary"
                     />
                   </div>
                 </div>
               </template>
-            </el-table-column>
-
-            <!-- 变体信息列 -->
-            <el-table-column label="变体信息" min-width="600">
-              <template #default="scope">
-                <el-table
-                  :data="scope.row.variants"
-                  border
-                  size="small"
-                  style="width: 100%"
+              <!-- 如果是单张图片URL -->
+              <template v-else-if="isImageUrl(scope.row[column])">
+                <div
+                  class="box"
+                  style="
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    margin: 5px;
+                    border-radius: 8px;
+                    overflow: hidden;
+                    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.5);
+                  "
                 >
-                  <el-table-column label="预览图" width="100" align="center">
-                    <template #default="variantScope">
-                      <el-image
-                        v-if="variantScope.row.预览图"
-                        :src="variantScope.row.预览图"
-                        @close="handleClose"
-                        :preview-src-list="[variantScope.row.预览图]"
-                        fit="contain"
-                        style="width: 60px; height: 60px"
-                      >
-                        <template #error>
-                          <div
-                            class="image-error"
-                            style="width: 60px; height: 60px"
-                          >
-                            <el-icon><Picture /></el-icon>
-                            <span>加载失败</span>
-                          </div>
-                        </template>
-                      </el-image>
+                  <el-image
+                    :src="scope.row[column]"
+                    :preview-src-list="[scope.row[column]]"
+                    fit="contain"
+                    @close="handleClose"
+                    style="width: 80px; height: 80px; border-radius: 8px"
+                  >
+                    <template #error>
+                      <div class="image-error">
+                        <el-icon><Picture /></el-icon>
+                        <span>加载失败</span>
+                      </div>
                     </template>
-                  </el-table-column>
-
-                  <el-table-column
-                    label="变种属性值"
-                    prop="变种属性值一"
-                    min-width="120"
-                  />
-
-                  <el-table-column label="尺寸" min-width="200">
-                    <template #default="variantScope">
-                      长: {{ variantScope.row.长 }} 宽:
-                      {{ variantScope.row.宽 }} 高: {{ variantScope.row.高 }}
-                    </template>
-                  </el-table-column>
-
-                  <el-table-column label="重量" prop="重量" width="80" />
-
-                  <el-table-column label="价格信息" min-width="200">
-                    <template #default="variantScope">
-                      申报价格: {{ variantScope.row.申报价格 }}<br />
-                      建议零售价:
-                      {{ variantScope.row["建议零售价(建议零售价币种)"] }}
-                    </template>
-                  </el-table-column>
-                </el-table>
+                  </el-image>
+                </div>
               </template>
-            </el-table-column>
 
-            <!-- 其他重要字段 -->
-            <el-table-column label="分类ID" prop="分类id" width="120" />
-          </el-table>
-        </div>
-
-        <div
-          v-if="previewData.length > 100 && previewMode === 'original'"
-          style="margin-top: 10px; color: #999; text-align: center"
-        >
-          仅显示前100条数据，共 {{ previewData.length }} 条
-        </div>
+              <!-- 其他类型数据正常显示 -->
+              <template v-else>
+                {{ scope.row[column] }}
+              </template>
+            </template>
+          </el-table-column>
+        </el-table>
       </div>
-      <template #footer>
-        <el-button @click="showPreviewTable = false">取消</el-button>
-        <el-button
-          type="primary"
-          @click="confirmImport"
-          :loading="importLoading"
-          >确认导入</el-button
-        >
-      </template>
-    </el-dialog>
 
+      <!-- 分组视图 - 新增 -->
+      <div v-else>
+        <el-table
+          :data="groupedPreviewData"
+          border
+          style="width: 100%"
+          max-height="800px"
+        >
+          <!-- 公共字段列 -->
+          <el-table-column
+            label="产品标题"
+            min-width="400"
+            show-overflow-tooltip
+          >
+            <template #default="scope">
+              {{ scope.row.产品标题 }}
+            </template>
+          </el-table-column>
+
+          <el-table-column label="轮播图" width="120" align="center">
+            <template #default="scope">
+              <div class="image-preview-cell">
+                <el-image
+                  v-if="parseImageUrls(scope.row.轮播图).length > 0"
+                  :src="parseImageUrls(scope.row.轮播图)[0]"
+                  @close="handleClose"
+                  :preview-src-list="parseImageUrls(scope.row.轮播图)"
+                  fit="contain"
+                  style="width: 80px; height: 80px"
+                >
+                  <template #error>
+                    <div class="image-error">
+                      <el-icon><Picture /></el-icon>
+                      <span>加载失败</span>
+                    </div>
+                  </template>
+                </el-image>
+                <div v-else class="image-error">
+                  <el-icon><Picture /></el-icon>
+                  <span>无图片</span>
+                </div>
+                <div class="image-count-badge">
+                  <el-badge
+                    :value="parseImageUrls(scope.row.轮播图).length"
+                    type="primary"
+                  />
+                </div>
+              </div>
+            </template>
+          </el-table-column>
+
+          <!-- 变体信息列 -->
+          <el-table-column label="变体信息" min-width="600">
+            <template #default="scope">
+              <el-table
+                :data="scope.row.variants"
+                border
+                size="small"
+                style="width: 100%"
+              >
+                <el-table-column label="预览图" width="100" align="center">
+                  <template #default="variantScope">
+                    <el-image
+                      v-if="variantScope.row.预览图"
+                      :src="variantScope.row.预览图"
+                      @close="handleClose"
+                      :preview-src-list="[variantScope.row.预览图]"
+                      fit="contain"
+                      style="width: 60px; height: 60px"
+                    >
+                      <template #error>
+                        <div
+                          class="image-error"
+                          style="width: 60px; height: 60px"
+                        >
+                          <el-icon><Picture /></el-icon>
+                          <span>加载失败</span>
+                        </div>
+                      </template>
+                    </el-image>
+                  </template>
+                </el-table-column>
+
+                <el-table-column
+                  label="变种属性值"
+                  prop="变种属性值一"
+                  min-width="120"
+                />
+
+                <el-table-column label="尺寸" min-width="200">
+                  <template #default="variantScope">
+                    长: {{ variantScope.row.长 }} 宽:
+                    {{ variantScope.row.宽 }} 高: {{ variantScope.row.高 }}
+                  </template>
+                </el-table-column>
+
+                <el-table-column label="重量" prop="重量" width="80" />
+
+                <el-table-column label="价格信息" min-width="200">
+                  <template #default="variantScope">
+                    申报价格: {{ variantScope.row.申报价格 }}<br />
+                    建议零售价:
+                    {{ variantScope.row["建议零售价(建议零售价币种)"] }}
+                  </template>
+                </el-table-column>
+              </el-table>
+            </template>
+          </el-table-column>
+
+          <!-- 其他重要字段 -->
+          <el-table-column label="分类ID" prop="分类id" width="120" />
+        </el-table>
+      </div>
+
+      <div
+        v-if="previewData.length > 100 && previewMode === 'original'"
+        style="margin-top: 10px; color: #999; text-align: center"
+      >
+        仅显示前100条数据，共 {{ previewData.length }} 条
+      </div>
+    </div>
     <template #footer>
-      <el-button @click="dialogVisible = false">取消</el-button>
-      <el-button
-        type="primary"
-        :loading="importLoading"
-        @click="handleDialogConfirm"
-        >预览数据</el-button
+      <el-button @click="showPreviewTable = false">取消</el-button>
+      <el-button type="primary" @click="confirmImport" :loading="importLoading"
+        >确认导入</el-button
+      >
+    </template>
+  </el-dialog>
+  <!-- 进度条对话框 -->
+  <el-dialog
+    v-model="showImportProgress"
+    title="导入进度"
+    width="500px"
+    :close-on-click-modal="false"
+    :show-close="false"
+  >
+    <div class="import-progress-container">
+      <div
+        v-for="(status, index) in importStatus"
+        :key="index"
+        class="shop-progress-item"
+      >
+        <div class="shop-info">
+          <span class="shop-name">店铺 {{ status.shopName }}</span>
+          <span class="shop-status">{{ status.statusText }}</span>
+        </div>
+        <el-progress
+          :percentage="status.percentage"
+          :status="status.status"
+          :stroke-width="18"
+          :format="
+            (percentage) => `${status.importedCount}/${status.totalCount || 95}`
+          "
+        />
+      </div>
+    </div>
+    <template #footer>
+      <el-button @click="showImportProgress = false" :disabled="importLoading"
+        >关闭</el-button
       >
     </template>
   </el-dialog>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, reactive, computed } from "vue";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { ref, onMounted, reactive, computed, h } from "vue";
+import { ElMessage, ElMessageBox, ElSelect, ElOption } from "element-plus";
 import {
   Upload,
   Edit,
   Delete,
   ArrowDown,
   ArrowUp,
+  Download,
+  UploadFilled,
+  Connection,
+  FolderAdd,
 } from "@element-plus/icons-vue";
 import * as XLSX from "xlsx";
 // @ts-ignore 忽略类型检查
@@ -476,6 +861,7 @@ interface Project {
   folderPath: string;
   uploadedUrls: Record<string, { name: string; url: string }[]>;
   isValid: boolean;
+  mode?: string;
 }
 interface Account {
   username: string;
@@ -486,14 +872,30 @@ interface Account {
 const projectList = ref<Project[]>([]);
 const validityMap = ref<boolean[]>([]);
 const dialogVisible = ref(false);
+const batchDialogVisible = ref(false);
 const currentProject = ref<Project | null>(null);
 const accounts = ref<Account[]>([]);
 const showAccountForm = ref(false);
 const loginLoading = ref(false);
 const importLoading = ref(false);
+const batchImportLoading = ref(false);
 const multipleSelection = ref<any[]>([]);
-
+const selectedFiles = ref([]);
+// 分页相关
+const pagination = reactive({
+  currentPage: 1,
+  pageSize: 10,
+});
+// 添加导入导出相关状态
+const importDialogVisible = ref(false);
+const importFile = ref<File | null>(null);
+const importPreview = ref<{ folderName: string; fileCount: number }[]>([]);
+const selectedProjects = ref<Project[]>([]);
+const importProject = ref<Project[]>([]);
 const shopList = ref([]);
+// 添加导入进度状态
+const showImportProgress = ref(false);
+const importStatus = ref([]);
 
 const dialogForm = ref({
   mode: "multiple", // 或 "single"
@@ -513,6 +915,23 @@ const previewData = ref<any[]>([]);
 // 添加新的状态变量
 const previewMode = ref("original"); // 'original' 或 'grouped'
 const groupedPreviewData = ref([]);
+// 每页条数变化
+const handleSizeChange = (val) => {
+  pagination.pageSize = val;
+  // ✅ 重置到第一页以避免越界
+  pagination.currentPage = 1;
+};
+
+// 当前页变化
+const handleCurrentChange = (val) => {
+  pagination.currentPage = val;
+};
+// ✅ 分页后的数据（核心修复）
+const pagedData = computed(() => {
+  const start = (pagination.currentPage - 1) * pagination.pageSize;
+  const end = start + pagination.pageSize;
+  return projectList.value.slice(start, end);
+});
 // 判断字符串是否为图片URL
 const isImageUrl = (str: string): boolean => {
   if (typeof str !== "string") return false;
@@ -601,6 +1020,75 @@ const sortedColumns = computed(() => {
   // 图片列在前，其他列在后
   return [...sortedColumns, ...otherColumns];
 });
+
+// 更新导入状态的方法
+const updateImportStatus = (
+  shopName,
+  statusText,
+  importedCount = 0,
+  totalCount = 95
+) => {
+  // 计算百分比
+  const percentage = Math.min(
+    Math.round((importedCount / totalCount) * 100),
+    100
+  );
+
+  // 确定状态
+  let status = "normal";
+  if (statusText.includes("正在读取")) {
+    status = "warning";
+  } else if (
+    statusText.includes("成功导入") &&
+    statusText.includes("请到 [待发布] 查看")
+  ) {
+    status = "success";
+  }
+
+  // 查找是否已存在该店铺的状态
+  const existingIndex = importStatus.value.findIndex(
+    (item) => item.shopName === shopName
+  );
+
+  if (existingIndex >= 0) {
+    // 更新现有状态
+    importStatus.value[existingIndex] = {
+      shopName,
+      statusText,
+      importedCount,
+      totalCount,
+      percentage,
+      status,
+    };
+  } else {
+    // 添加新状态
+    importStatus.value.push({
+      shopName,
+      statusText,
+      importedCount,
+      totalCount,
+      percentage,
+      status,
+    });
+  }
+};
+
+// 解析状态文本并更新进度
+const parseStatusAndUpdateProgress = (statusLine) => {
+  // 示例: 店铺 邹屿璠 状态：已成功导入70条
+  const match = statusLine.match(/店铺\s+(.+?)\s+状态：(.+)/);
+  if (match) {
+    const shopName = match[1];
+    const statusText = match[2];
+
+    // 提取导入数量
+    const countMatch = statusText.match(/已成功导入(\d+)条/);
+    const importedCount = countMatch ? parseInt(countMatch[1]) : 0;
+
+    updateImportStatus(shopName, statusText, importedCount);
+  }
+};
+
 // 从本地存储加载账号
 const loadAccounts = () => {
   try {
@@ -715,29 +1203,566 @@ const handleLogin = async () => {
     loginLoading.value = false;
   }
 };
-// 检查文件是否存在
-const checkFolderExists = async (path: string): Promise<boolean> => {
-  try {
-    const requiredFiles = ["图片URL.xlsx", "类目数据.xlsx", "产品标题.xlsx"];
-    const missing: string[] = [];
+// 处理表格选择变化
+const handleSelectionChange = (selection: Project[]) => {
+  selectedProjects.value = selection;
+};
 
+// 选择导入的项目
+const handleImportProject = (selection: Project[]) => {
+  importProject.value = [...selection];
+};
+
+// 显示导入对话框
+const showImportDialog = () => {
+  importDialogVisible.value = true;
+  importFile.value = null;
+  importPreview.value = [];
+};
+
+// 处理文件选择
+const handleFileChange = (file: any) => {
+  if (!file) return;
+
+  importFile.value = file.raw;
+
+  // 读取文件内容并预览
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const content = e.target?.result as string;
+      const data = JSON.parse(content);
+
+      if (Array.isArray(data)) {
+        importPreview.value = data.map((project) => ({
+          folderName: project.folderName,
+          fileCount: Object.values(project.uploadedUrls || {}).flat().length,
+        }));
+      } else {
+        ElMessage.error("导入的JSON格式不正确，应为项目数组");
+        importPreview.value = [];
+      }
+    } catch (error) {
+      console.error("解析JSON失败:", error);
+      ElMessage.error("解析JSON失败，请检查文件格式");
+      importPreview.value = [];
+    }
+  };
+  reader.readAsText(file.raw);
+};
+
+// 导入项目数据
+const importProjectsData = async () => {
+  if (!importFile.value) return;
+
+  try {
+    const reader = new FileReader();
+    reader.onload = async (e) => {
+      try {
+        const content = e.target?.result as string;
+        const importedProjects = JSON.parse(content);
+
+        if (!Array.isArray(importedProjects)) {
+          ElMessage.error("导入的JSON格式不正确，应为项目数组");
+          return;
+        }
+
+        // 验证导入的项目数据结构
+        const validProjects = importedProjects.filter((project) => {
+          return (
+            project.folderName &&
+            project.folderPath &&
+            typeof project.uploadedUrls === "object"
+          );
+        });
+
+        if (validProjects.length === 0) {
+          ElMessage.error("导入的项目数据无效");
+          return;
+        }
+
+        // 检查项目路径是否存在
+        for (const project of validProjects) {
+          const isValid = await window.electronAPI.existsFolder(
+            project.folderPath
+          );
+          project.isValid = isValid;
+        }
+
+        // 合并项目列表，避免重复
+        const existingNames = projectList.value.map((p) => p.folderName);
+        const newProjects = validProjects.filter(
+          (p) => !existingNames.includes(p.folderName)
+        );
+        const duplicateCount = validProjects.length - newProjects.length;
+
+        projectList.value = [...projectList.value, ...newProjects];
+
+        // 保存到本地
+        await window.electronAPI.saveProjectList(
+          JSON.stringify(projectList.value)
+        );
+
+        ElMessage.success(
+          `成功导入 ${newProjects.length} 个项目${
+            duplicateCount > 0 ? `，${duplicateCount} 个项目因重名被忽略` : ""
+          }`
+        );
+        importDialogVisible.value = false;
+      } catch (error) {
+        console.error("导入项目失败:", error);
+        ElMessage.error("导入项目失败，请检查文件格式");
+      }
+    };
+    reader.readAsText(importFile.value);
+  } catch (error) {
+    console.error("读取文件失败:", error);
+    ElMessage.error("读取文件失败");
+  }
+};
+
+// 导出项目数据
+const exportProjects = async () => {
+  try {
+    // 如果有选中的项目，则导出选中的，否则导出全部
+    const projectsToExport =
+      selectedProjects.value.length > 0
+        ? selectedProjects.value
+        : projectList.value;
+
+    if (projectsToExport.length === 0) {
+      ElMessage.warning("没有可导出的项目");
+      return;
+    }
+
+    // 创建导出数据
+    const exportData = JSON.stringify(projectsToExport, null, 2);
+    const filename = `项目数据_${new Date().toISOString().slice(0, 10)}.json`;
+
+    // 使用 Electron API 保存文件，确保提供所有必要参数
+    const result = await window.electronAPI.saveJSON({
+      content: exportData,
+      filename: filename,
+    });
+
+    if (!result) {
+      return; // 用户取消了保存
+    }
+
+    ElMessage.success(`成功导出 ${projectsToExport.length} 个项目`);
+  } catch (error) {
+    console.error("导出项目失败:", error);
+    ElMessage.error("导出项目失败: " + error.message);
+  }
+};
+
+// 类型定义
+type AlertCacheItem = {
+  lastAlertTime: number;
+  missingFiles: string[];
+};
+
+// 提示缓存（目录路径 -> 缓存数据）
+const missingAlertCache = new Map<string, AlertCacheItem>();
+
+const checkFolderExists = async (folderPath: string): Promise<boolean> => {
+  try {
+    // 规范路径格式（关键修复点）
+    const normalizedPath = folderPath
+      .replace(/\\+$/, "") // 去除末尾反斜杠
+      .toLowerCase(); // 统一为小写（Windows路径不区分大小写）
+
+    // 必要文件列表
+    const requiredFiles = ["图片URL.xlsx", "类目数据.xlsx", "产品标题.xlsx"];
+
+    // 检查缺失文件
+    const missing: string[] = [];
     for (const file of requiredFiles) {
       const exists = await window.electronAPI.checkFileExists(
-        `${path}/${file}`
+        `${folderPath}\\${file}`
       );
       if (!exists) missing.push(file);
     }
 
+    // 获取缓存数据
+    const cache = missingAlertCache.get(normalizedPath);
+    const now = Date.now();
+
+    // 判断是否需要提示
+    let shouldAlert = false;
     if (missing.length > 0) {
-      ElMessage.warning(`目录缺少文件：${missing.join("，")}`);
-      return false;
+      if (
+        !cache ||
+        now - cache.lastAlertTime > 300000 || // 5分钟间隔
+        JSON.stringify(missing) !== JSON.stringify(cache?.missingFiles) // 缺失文件变化
+      ) {
+        shouldAlert = true;
+        missingAlertCache.set(normalizedPath, {
+          lastAlertTime: now,
+          missingFiles: missing,
+        });
+      }
+    } else if (cache) {
+      // 缺失文件已修复时清除缓存
+      missingAlertCache.delete(normalizedPath);
     }
 
-    return true;
-  } catch {
+    // 控制台输出调试信息（可选）
+    console.debug(
+      `[检查目录] 路径:${normalizedPath} 缺失:${missing.length} 提示:${shouldAlert}`
+    );
+
+    // 执行提示
+    if (shouldAlert) {
+      ElMessage.warning({
+        message: `目录缺少必要文件：${missing.join("，")}`,
+        duration: 5000,
+        grouping: true, // 启用消息合并（关键功能）
+      });
+    }
+
+    return missing.length === 0;
+  } catch (err) {
+    console.error("目录检查异常:", err);
     return false;
   }
 };
+// 上传项目JSON
+const uploadProject = async () => {
+  if (selectedProjects.value.length === 0) {
+    ElMessage.warning("请选择要上传的项目");
+    return;
+  }
+
+  await ElMessageBox.confirm("确认上传选中的项目数据吗？", "提示", {
+    confirmButtonText: "确定",
+    cancelButtonText: "取消",
+    type: "warning",
+  });
+
+  try {
+    // 1. 生成JSON字符串
+    const exportData = JSON.stringify(selectedProjects.value, null, 2);
+    // 2. 弹出文字输入对话框让用户输入项目名称
+    const projectName = await ElMessageBox.prompt("请输入项目名称", "提示", {
+      confirmButtonText: "确定",
+      cancelButtonText: "取消",
+      inputValue: "",
+      inputPlaceholder: "请输入项目名称",
+      inputType: "text",
+      inputPattern: /^[\u4e00-\u9fa5a-zA-Z0-9]+$/,
+      inputErrorMessage: "项目名称只能包含中文字母和数字",
+    });
+
+    if (!projectName.value) {
+      ElMessage.warning("项目名称不能为空");
+      return;
+    }
+
+    const fileKey = `项目备份/${projectName.value}.json`;
+
+    // 3. 获取上传凭证
+    const tokenRes = await fetch("http://121.41.45.224:3100/get-token");
+    const {
+      data: { token },
+    } = await tokenRes.json();
+
+    // 4. 直接传递数据内容（无需本地文件）
+    const result = await window.electronAPI.uploadProjectJSON({
+      data: exportData, // 直接传递JSON字符串
+      key: fileKey,
+      token: token,
+    });
+    console.log(result);
+
+    if (result.success) {
+      // 更新项目状态...
+      ElMessage.success(`成功上传 ${selectedProjects.value.length} 个项目备份`);
+    }
+  } catch (err) {
+    ElMessage.error(`上传失败: ${err.message}`);
+  }
+};
+// 下载项目JSON
+const downloadProject = async () => {
+  try {
+    // 1. 获取七牛云文件列表
+    let { files, error } = await window.electronAPI.listQiniuFiles({
+      prefix: "项目备份/",
+      limit: 100,
+    });
+
+    if (error || !files?.length) {
+      throw new Error(error || "未找到备份文件");
+    }
+    files = files.filter((file) => file.key !== "项目备份/");
+    // 2. 弹窗组件代码
+    await ElMessageBox({
+      title: "选择项目备份",
+      message: () =>
+        h("div", [
+          h("div", { class: "mb-2" }, "请选择要导入的备份文件："),
+          h(
+            ElSelect,
+            {
+              modelValue: selectedFiles.value, // 绑定已声明的变量
+              multiple: true,
+              filterable: true,
+              style: { width: "100%" },
+              "onUpdate:modelValue": (val) => (selectedFiles.value = val), // 更新值
+            },
+            files.map((file) =>
+              h(ElOption, {
+                key: file.key,
+                value: file.key,
+                label: file.key.split("/").pop(), // 显示如"大滑梯.json"
+              })
+            )
+          ),
+        ]),
+      showCancelButton: true,
+      confirmButtonText: "开始导入",
+      cancelButtonText: "取消",
+      beforeClose: async (action, instance, done) => {
+        if (action === "confirm") {
+          if (selectedFiles.value.length === 0) {
+            ElMessage.warning("请至少选择一个文件");
+            return;
+          }
+
+          instance.confirmButtonLoading = true;
+          try {
+            // 执行导入逻辑
+            await executeImport(selectedFiles.value);
+            done();
+          } catch (err) {
+            console.error("导入失败:", err);
+          } finally {
+            instance.confirmButtonLoading = false;
+          }
+        } else {
+          done();
+        }
+      },
+    });
+  } catch (err) {
+    if (err == "cancel") {
+      ElMessage.info("取消下载");
+    }
+  }
+};
+
+// 执行导入的核心逻辑
+const executeImport = async (fileKeys) => {
+  try {
+    // 1. 弹出目录选择对话框
+    const { canceled, filePaths } =
+      await window.electronAPI.openDirectoryDialog({
+        properties: ["openDirectory"],
+        title: "选择项目存储目录",
+      });
+
+    if (canceled || !filePaths?.[0]) {
+      return ElMessage.info("已取消导入操作");
+    }
+
+    const baseDir = filePaths[0]; // 用户选择的基础目录
+    let importedCount = 0;
+    const failedProjects = [];
+
+    // 2. 批量处理每个备份文件
+    for (const fileKey of fileKeys) {
+      // 下载备份文件
+      const downloadRes = await window.electronAPI.downLoadQiniuFile({
+        fileKey,
+        savePath: baseDir + "\\" + fileKey.split("/")[1],
+      });
+      console.log(downloadRes);
+
+      if (!downloadRes.success) {
+        failedProjects.push({ fileKey, reason: "文件下载失败" });
+        continue;
+      }
+
+      // 3. 读取并解析项目数据
+      const content = await window.electronAPI.readJSONFile(
+        baseDir + "\\" + fileKey.split("/")[1]
+      );
+      const projects = JSON.parse(content);
+
+      // 4. 创建项目文件夹并处理数据
+      for (const project of projects) {
+        try {
+          // 生成新路径（防止路径冲突）
+          const newFolderName = project.folderName.replace(
+            /[^a-zA-Z0-9\u4e00-\u9fa5]/g,
+            "_"
+          );
+          const newFolderPath = baseDir + "\\" + newFolderName;
+
+          // 检查是否已存在
+          if (await window.electronAPI.checkDirectoryExists(newFolderPath)) {
+            failedProjects.push({
+              project: project.folderName,
+              reason: "目录已存在",
+            });
+            continue;
+          }
+
+          // 创建项目目录
+          await window.electronAPI.createDirectory(newFolderPath);
+
+          // 构建新项目对象
+          const newProject = {
+            ...project,
+            folderPath: newFolderPath,
+            createdAt: new Date().toISOString(),
+          };
+
+          // 过滤重复项目（根据名称和路径）
+          const isDuplicate = projectList.value.some(
+            (p) =>
+              p.folderName === newProject.folderName ||
+              p.folderPath === newProject.folderPath
+          );
+
+          if (!isDuplicate) {
+            projectList.value.push(newProject);
+            importedCount++;
+          }
+        } catch (err) {
+          failedProjects.push({
+            project: project.folderName,
+            reason: `创建目录失败: ${err.message}`,
+          });
+        }
+      }
+
+      // 5. 清理临时文件
+      await window.electronAPI.deleteFile(downloadRes.savePath);
+    }
+
+    // 6. 保存更新后的项目列表
+    await window.electronAPI.saveProjectList(JSON.stringify(projectList.value));
+
+    // 7. 显示操作结果
+    const successMessage = `成功导入 ${importedCount} 个项目`;
+    const failMessage =
+      failedProjects.length > 0
+        ? `，失败 ${failedProjects.length} 项（${failedProjects
+            .map((f) => `${f.project}: ${f.reason}`)
+            .join("；")}）`
+        : "";
+
+    ElMessage.success({
+      message: successMessage + failMessage,
+      duration: 5000,
+      showClose: true,
+    });
+  } catch (err) {
+    console.error("导入过程中发生错误:", err);
+    ElMessage.error(`导入失败: ${err.message}`);
+  }
+};
+// 批量上传导入文档
+const batchUploadImportExcel = async () => {
+  if (selectedProjects.value.length === 0) {
+    ElMessage.warning("请选择要上传导入文档的项目");
+    return;
+  }
+  // 弹出对话框提示用户进入上传
+  ElMessageBox.confirm("确认批量上传导入文档吗？", "提示", {
+    confirmButtonText: "确定",
+    cancelButtonText: "取消",
+    type: "warning",
+  })
+    .then(async () => {
+      selectedProjects.value.forEach(async (project) => {
+        await uploadExcel(project);
+      });
+    })
+    .catch(() => {
+      ElMessage.info("取消批量上传导入文档");
+    });
+};
+// 批量下载导入文档
+const batchDownloadImportExcel = async () => {
+  // 弹出对话框提示用户进入上传
+  ElMessageBox.confirm("确认批量下载导入文档吗？", "提示", {
+    confirmButtonText: "确定",
+    cancelButtonText: "取消",
+    type: "warning",
+  })
+    .then(async () => {
+      selectedProjects.value.forEach(async (project) => {
+        await downloadExcel(project);
+      });
+    })
+    .catch(() => {
+      ElMessage.info("取消批量上传导入文档");
+    });
+};
+
+// 批量导入数据
+const batchImportData = async () => {
+  if (selectedProjects.value.length === 0) {
+    ElMessage.warning("请选择要导入数据的项目");
+    return;
+  }
+  batchDialogVisible.value = true;
+};
+
+const generateAll = async () => {
+  if (selectedProjects.value.length === 0) {
+    ElMessage.warning("请选择要生成数据的项目");
+    return;
+  }
+  selectedProjects.value.forEach(async (project) => {
+    project.mode = dialogForm.value.mode;
+    // 1.检查文件夹是否存在
+    const result = await checkFolderExists(project.folderPath);
+    if (!result) return ElMessage.warning("文件夹不存在或缺少必要文件");
+    try {
+      const { folderPath } = project;
+      const imageUrlData = await readExcelToJson(`${folderPath}\\图片URL.xlsx`);
+      const fixedData = await readExcelToJson(`${folderPath}\\固定数据.xlsx`);
+      const titlesData = await readExcelToJson(`${folderPath}\\产品标题.xlsx`);
+      const categoryData = await readExcelToJson(
+        `${folderPath}\\类目数据.xlsx`
+      );
+
+      generateImportExcel({
+        imageUrlData,
+        fixedData,
+        titlesData,
+        categoryData,
+        variantCount: fixedData.length,
+        mode: dialogForm.value.mode,
+        path: folderPath,
+        fileName: "导入数据",
+      });
+    } catch (err) {
+      ElMessage.error("❌ 导入失败，请检查文件或格式");
+      console.error(err);
+    }
+  });
+};
+
+// 同步模式更改
+const changeAllMode = (mode) => {
+  selectedProjects.value.forEach((project) => {
+    project.mode = mode;
+  });
+  console.log(selectedProjects.value);
+};
+
+// 单个模式更改
+const changeOnlyMode = ($event, project) => {
+  console.log($event, project);
+  selectedProjects.value
+};
+
+// 导入数据
 const importProjectData = async (project: Project) => {
   const result = checkFolderExists;
   if (!result) {
@@ -760,10 +1785,15 @@ const importProjectData = async (project: Project) => {
   dialogVisible.value = true;
 };
 
-const exportExcel = async () => {
-  if (!currentProject.value) return;
+const exportExcel = async ($event: Event, row?: any) => {
+  if (!currentProject.value && !row) return;
+  if (row) {
+    currentProject.value = row;
+  }
   try {
+    console.log(currentProject.value);
     const { folderPath } = currentProject.value;
+
     const imageUrlData = await readExcelToJson(`${folderPath}\\图片URL.xlsx`);
     const fixedData = await readExcelToJson(`${folderPath}\\固定数据.xlsx`);
     const titlesData = await readExcelToJson(`${folderPath}\\产品标题.xlsx`);
@@ -783,6 +1813,158 @@ const exportExcel = async () => {
     ElMessage.error("❌ 导入失败，请检查文件或格式");
     console.error(err);
   }
+};
+/**
+ * 解析文件名并生成纯净的七牛云键名
+ * @param {string} fileName - 原始文件名（示例："商品(2)__o9yac1"）
+ * @returns {{
+ *   mainName: string,      // 主名称（示例："商品"）
+ *   numberSuffix?: string, // 数字后缀（示例："2"）
+ *   qiniuKey: string       // 七牛云键名（示例："合成文件/商品2导入数据/"）
+ * }}
+ */
+function parseUniversalFileName(fileName) {
+  // 核心正则：匹配三种格式
+  const pattern = /^(.+?)(?:\((\d+)\)|(\d+))?__(.+)$/;
+  const match = fileName.match(pattern);
+
+  if (!match) {
+    throw new Error(
+      `文件名格式错误，应为："主名称(数字)__时间戳"、"主名称数字__时间戳" 或 "主名称__时间戳"`
+    );
+  }
+
+  // 提取关键字段
+  const [, mainName, bracketNum, pureNum, timestamp] = match;
+  const numberSuffix = bracketNum || pureNum || "";
+
+  return {
+    mainName: mainName.trim(), // 清理前后空格
+    numberSuffix,
+    timestamp,
+    qiniuKey: `合成文件/${mainName.replace(/[()]/g, "").trim()}导入数据/`,
+  };
+}
+// 上传excel文件
+const uploadExcel = async (row) => {
+  currentProject.value = row;
+  // 对话框反馈提示用户进入上传操作
+  ElMessageBox.confirm("确认上传吗？", "提示", {
+    confirmButtonText: "确定",
+    cancelButtonText: "取消",
+    type: "warning",
+  }).then(async (res) => {
+    if (res == "cancel") {
+      return ElMessage.info("取消上传");
+    }
+    if (res == "confirm") {
+      // 1. 检测当前路径是否有效
+      const isValid = await window.electronAPI.checkDirectoryExists(
+        row.folderPath
+      );
+      if (!isValid) {
+        ElMessage.warning("当前路径无效，请选择正确路径");
+        return;
+      }
+      // 2. 检测导入数据是否存在
+      const result = await window.electronAPI.checkFileExists(
+        `${row.folderPath}\\导入数据.xlsx`
+      );
+      if (!result) {
+        ElMessage.warning("当前路径下未检测到导入数据，请先生成导入文档");
+        return;
+      }
+
+      // 3. 上传excel文件
+      try {
+        // 3-1 获取七牛云上传token
+        const response = await fetch("http://121.41.45.224:3100/get-token");
+        const { data } = await response.json();
+
+        // 3-2 构建上传键名
+        const parseResult = parseUniversalFileName(row.folderName);
+        const filePath = `${row.folderPath}\\导入数据.xlsx`;
+        // 1. 检查文件夹是否存在
+        const { exists, error: checkError } =
+          await window.electronAPI.checkQiniuFolder(parseResult.qiniuKey);
+        if (checkError) throw new Error(checkError);
+
+        // 2. 不存在时自动创建
+        if (!exists) {
+          const { success, error: createError } =
+            await window.electronAPI.createQiniuFolder(
+              parseResult.qiniuKey,
+              { forceCheck: false } // 已提前检查过，可跳过二次检查
+            );
+          if (!success) throw new Error(createError);
+        }
+        // 3-3 上传文件至七牛云空间
+        const result = await window.electronAPI.uploadFileStream({
+          filePath,
+          key: parseResult.qiniuKey + row.folderName + ".xlsx",
+          token: data.token,
+        });
+
+        if (result.success) {
+          currentProject.value.excel = result.data.key;
+          await window.electronAPI.saveProjectList(
+            JSON.stringify(projectList.value)
+          );
+          ElMessage.success("文档上传成功");
+        }
+      } catch (err) {
+        console.error(err);
+        ElMessage.error("❌ 上传失败，请检查文件或格式");
+      }
+    }
+  });
+};
+// 下载excel文件
+const downloadExcel = async (row) => {
+  currentProject.value = row;
+  // 对话框反馈提示用户进入下载操作
+  ElMessageBox.confirm("确认下载吗？", "提示", {
+    confirmButtonText: "确定",
+    cancelButtonText: "取消",
+    type: "warning",
+  }).then(async (res) => {
+    if (res == "cancel") {
+      return ElMessage.info("取消下载");
+    }
+    if (res == "confirm") {
+      // 1. 检测当前路径是否有效
+      const isValid = await window.electronAPI.checkDirectoryExists(
+        row.folderPath
+      );
+      if (!isValid) {
+        ElMessage.warning("当前路径无效，请选择正确路径");
+        return;
+      }
+      // 2. 检测七牛云空间就导入数据文档是否存在
+      const result = await window.electronAPI.checkQiniuFile(
+        currentProject.value.excel
+      );
+      if (!result) {
+        ElMessage.warning("当前路径下未检测到导入数据，请先上传");
+        return;
+      }
+      // 3. 下载文件至本地
+      try {
+        const result = await window.electronAPI.downLoadQiniuFile({
+          fileKey: currentProject.value.excel,
+          savePath: `${currentProject.value.folderPath}\\导入数据.xlsx`,
+        });
+        console.log(result);
+
+        if (result.success) {
+          ElMessage.success("文档下载成功");
+        }
+      } catch (err) {
+        console.error(err);
+        ElMessage.error("❌ 下载失败，请检查文件或格式");
+      }
+    }
+  });
 };
 //用于合并相同产品的不同变体
 const groupProductVariants = (data) => {
@@ -865,8 +2047,11 @@ const preparePreviewData = () => {
   // 更新状态
   groupedPreviewData.value = groupedData;
 };
-const handleDialogConfirm = async () => {
-  if (!currentProject.value) return;
+const handleDialogConfirm = async (row?: any) => {
+  if (!currentProject.value && !row) return;
+  if (row) {
+    currentProject.value = row;
+  }
   importLoading.value = true;
   let selectedAccount: any;
   // 检查是否选择了账号
@@ -890,7 +2075,7 @@ const handleDialogConfirm = async () => {
 
   // ✅ 店铺选择校验
   if (!multipleSelection.value.length) {
-    ElMessage.error("至少选择一个店铺导入");
+    ElMessage.error("至少选择一个店铺");
     importLoading.value = false;
     return;
   }
@@ -911,13 +2096,37 @@ const handleDialogConfirm = async () => {
   }
 };
 
+// 确认批量导入数据
+const confirmBatchImport = async () => {
+  if (!importProject.value.length) return ElMessage.error("请选择一个项目");
+  batchImportLoading.value = true;
+  try {
+    importProject.value.forEach(async (project) => {
+      await confirmImport(project.folderPath);
+    });
+    ElMessage.success("批量导入完成");
+  } catch (err) {
+    console.error(err);
+    ElMessage.error("批量导入失败");
+  } finally {
+    batchImportLoading.value = false;
+  }
+};
+
 // 确认导入数据
-const confirmImport = async () => {
-  if (!currentProject.value || !previewData.value.length) return;
+const confirmImport = async (excelPath?: string) => {
+  console.log(importProject.value);
+
+  if (!currentProject.value && !importProject.value.length)
+    return ElMessage.warning("请选择一个项目");
   importLoading.value = true;
+  importStatus.value = [];
+  showImportProgress.value = true;
 
   const selectedAccount = accounts.value[dialogForm.value.selectedAccount - 1];
-  const filePath = `${currentProject.value.folderPath}/导入数据.xlsx`;
+  const filePath = `${
+    excelPath ? excelPath : currentProject.value.folderPath
+  }/导入数据.xlsx`;
 
   ElMessage.success("开始导入中...");
 
@@ -939,7 +2148,8 @@ const confirmImport = async () => {
     for (const val of multipleSelection.value) {
       const shopId = val.id;
       const shopName = val.name;
-
+      // 初始化该店铺的状态
+      updateImportStatus(shopName, "正在读取文件数据，请稍后！", 0);
       try {
         // 创建FormData对象
         const formData = new FormData();
@@ -966,6 +2176,9 @@ const confirmImport = async () => {
             onUpdate: (status) => {
               // 只显示第一行状态信息作为更新提示
               console.log(`店铺 ${shopName} 状态：${status.split("<br/>")[0]}`);
+              parseStatusAndUpdateProgress(
+                `店铺 ${shopName} 状态：${status.split("<br/>")[0]}`
+              );
             },
             onSuccess: (status) => {
               ElMessage.success(`🎉 店铺 ${shopName} 导入完成！`);
@@ -1015,20 +2228,20 @@ const removeProject = async (index: number) => {
   }).then(async () => {
     try {
       // 修正：正确调用删除目录接口
-      const res = await fetch("http://121.41.45.224:3100/delete-dir", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          prefix, // 使用正确的前缀格式
-        }),
-      });
+      // const res = await fetch("http://121.41.45.224:3100/delete-dir", {
+      //   method: "POST",
+      //   headers: {
+      //     "Content-Type": "application/json",
+      //   },
+      //   body: JSON.stringify({
+      //     prefix, // 使用正确的前缀格式
+      //   }),
+      // });
 
-      const data = await res.json();
-      if (!data.success) {
-        throw new Error(data.error || "删除失败");
-      }
+      // const data = await res.json();
+      // if (!data.success) {
+      //   throw new Error(data.error || "删除失败");
+      // }
 
       // 删除本地记录
       projectList.value.splice(index, 1);
@@ -1046,35 +2259,42 @@ const removeProject = async (index: number) => {
 
 // 清空所有项目
 const clearAllProjects = async () => {
-  ElMessageBox.confirm("确定要清空所有项目数据吗？数据不可恢复!!!", "警告", {
+  ElMessageBox.confirm("确定要清空所选项目数据吗？", "警告", {
     type: "error",
   }).then(async () => {
     try {
       // 遍历所有项目，调用删除云端目录接口
-      for (const project of projectList.value) {
-        const prefix = `${project.folderName}/`; // 每个项目一个目录
-        const response = await fetch("http://121.41.45.224:3100/delete-dir", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ prefix }),
-        });
+      // for (const project of projectList.value) {
+      //   // const prefix = `${project.folderName}/`; // 每个项目一个目录
+      //   // const response = await fetch("http://121.41.45.224:3100/delete-dir", {
+      //   //   method: "POST",
+      //   //   headers: {
+      //   //     "Content-Type": "application/json",
+      //   //   },
+      //   //   body: JSON.stringify({ prefix }),
+      //   // });
 
-        const data = await response.json();
-        if (!data.success) {
-          console.warn(
-            `删除项目 ${project.folderName} 失败: ${data.error || "未知错误"}`
-          );
-        }
-      }
+      //   // const data = await response.json();
+      //   // if (!data.success) {
+      //   //   console.warn(
+      //   //     `删除项目 ${project.folderName} 失败: ${data.error || "未知错误"}`
+      //   //   );
+      //   // }
+      // }
+      selectedProjects.value.forEach((project) => {
+        projectList.value = projectList.value.filter((item) => {
+          return item.folderName !== project.folderName;
+        });
+      });
 
       // 清空本地项目记录
-      projectList.value = [];
-      validityMap.value = [];
-      await window.electronAPI.saveProjectList(JSON.stringify([]));
-
-      ElMessage.success("✅ 所有项目已清空");
+      await window.electronAPI.saveProjectList(
+        JSON.stringify(projectList.value)
+      );
+      validityMap.value = projectList.value.map((p: any) =>
+        checkFolderExists(p.folderPath)
+      );
+      ElMessage.success("所有项目已清空");
     } catch (error) {
       console.error("清空项目失败:", error);
       ElMessage.error("清空失败，请检查网络连接或后端状态");
@@ -1091,7 +2311,7 @@ const changeFolderPath = async (index: number) => {
   project.folderPath = newPath;
 
   // 🔍 添加路径是否存在检查
-  const isValid = await window.electronAPI.checkFolderExists(newPath);
+  const isValid = await window.electronAPI.existsFolder(newPath);
   project.isValid = isValid;
 
   // ✅ 重新保存项目列表
@@ -1242,7 +2462,9 @@ onMounted(async () => {
     const data = await window.electronAPI.loadProjectList();
     const parsed = JSON.parse(data || "[]");
     projectList.value = parsed;
-
+    projectList.value.forEach((p: any) => {
+      p.mode = "multiple";
+    });
     // 检查每个路径是否有效
     validityMap.value = parsed.map((p: any) => checkFolderExists(p.folderPath));
 
@@ -1261,13 +2483,26 @@ onMounted(async () => {
 .project-table {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  max-width: 960px;
   height: 100%;
   margin: 20px auto;
   padding: 20px;
 }
+
+.action-buttons {
+  display: flex;
+  gap: 10px;
+}
+
+.import-dialog-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.import-preview {
+  margin-top: 20px;
+}
+
 .image-preview-cell {
   position: relative;
   display: flex;
@@ -1292,7 +2527,45 @@ onMounted(async () => {
   font-size: 12px;
   background-color: #f5f7fa;
 }
+.import-progress-container {
+  padding: 20px;
+}
 
+.shop-progress-item {
+  margin-bottom: 20px;
+  padding: 15px;
+  background-color: #f8f8f8;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.shop-info {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.shop-name {
+  font-weight: bold;
+  font-size: 16px;
+}
+
+.shop-status {
+  color: #606266;
+}
+
+/* 为不同状态的进度条添加样式 */
+:deep(.el-progress-bar__inner.is-success) {
+  background-color: #67c23a;
+}
+
+:deep(.el-progress-bar__inner.is-warning) {
+  background-color: #e6a23c;
+}
+
+:deep(.el-progress-bar__inner.is-exception) {
+  background-color: #f56c6c;
+}
 .error-details-dialog .el-message-box__title {
   color: #d32f2f !important;
 }

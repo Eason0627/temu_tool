@@ -138,7 +138,7 @@ export function generateImportExcel({
   if (mode === "multiple") {
     categoryData.forEach((cat, catIdx) => {
       const categoryLetter = categoryLetters[catIdx];
-      const matchingTitles = titlesData.filter((t) => t.分类id === cat.分类id);
+      const matchingTitles = titlesData.filter((t) => t.分类id == cat.分类id);
       // 异常处理：当分类下无对应标题时
       if (matchingTitles.length === 0) {
         console.warn(`分类ID ${cat.分类id} 下未找到匹配的产品标题`);
@@ -174,7 +174,6 @@ export function generateImportExcel({
               "",
             产品描述: imgRow["产品描述"] || "",
           };
-
           finalRows.push(row);
         });
       });

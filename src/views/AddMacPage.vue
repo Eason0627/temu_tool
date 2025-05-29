@@ -1,15 +1,16 @@
 <script setup>
-import { ref, reactive, onMounted } from "vue";
+import { ref, reactive, onMounted, onBeforeUnmount } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import { useRouter } from "vue-router";
 import axios from "axios";
+import dayjs from "dayjs"; // 添加日期处理库
 
 const router = useRouter();
 
 // 状态管理
 const state = reactive({
-  loading: true,
-  isAuthenticated: !!sessionStorage.getItem("admin_key"),
+  loading: false,
+  isAuthenticated: sessionStorage.getItem("admin_key") ? true : false,
   authLoading: false,
   authError: "",
   macAddresses: [],
@@ -19,8 +20,15 @@ const state = reactive({
   },
   forms: {
     auth: { adminKey: "" },
-    addMac: { macAddress: "" },
-    editMac: { oldMac: "", newMac: "" },
+    addMac: {
+      macAddress: "",
+      deviceName: "", // 新增设备名称字段
+    },
+    editMac: {
+      oldMac: "",
+      newMac: "",
+      deviceName: "", // 新增设备名称编辑字段
+    },
   },
 });
 
@@ -72,19 +80,39 @@ const handleAuthError = (error) => {
 const fetchMacAddresses = async () => {
   try {
     const { data } = await apiClient.get("/admin/macs");
-    state.macAddresses = data.data.map((mac) => ({
-      macAddress: mac.value,
-      status: mac.status,
+
+    state.macAddresses = data.data.devices.map((device) => ({
+      macAddress: device.mac,
+      status: device.status,
+      device: device.device, // 正确字段名（原错误：device.device）
+      createdAt: dayjs(device.expireDate).format("YYYY-MM-DD HH:mm"), // 修正字段名
+      operator: device.createdBy, // 字段名统一
     }));
   } catch (error) {
     handleDataError(error, "获取列表失败");
+  } finally {
+    state.loading = false;
   }
 };
 
 const addMacAddress = async () => {
   try {
+    // 新增格式预处理
+    const rawMac = state.forms.addMac.macAddress;
+    const cleanedMac = rawMac
+      .replace(/[^A-Fa-f0-9]/g, "") // 去除非十六进制字符
+      .toUpperCase()
+      .match(/.{2}/g) // 每两位分组
+      ?.join(":"); // 用冒号连接
+
+    if (!cleanedMac) {
+      ElMessage.error("MAC地址格式无效，示例：00:11:22:33:44:55");
+      return;
+    }
+
     const { data } = await apiClient.post("/admin/macs", {
-      mac: state.forms.addMac.macAddress,
+      mac: cleanedMac, // 使用标准化后的MAC地址
+      deviceName: state.forms.addMac.deviceName,
     });
 
     if (data.success) {
@@ -99,14 +127,21 @@ const addMacAddress = async () => {
 
 const updateMacAddress = async () => {
   try {
+    // 标准化旧MAC地址格式
+    const oldMac = state.forms.editMac.oldMac.replace(/-/g, ":");
+    const newMac = state.forms.editMac.newMac.replace(/-/g, ":");
+
     const { data } = await apiClient.put(
-      `/admin/macs/${state.forms.editMac.oldMac}`,
-      { newMac: state.forms.editMac.newMac }
+      `/admin/macs/${oldMac}`, // 使用标准化后的旧MAC
+      {
+        newMac,
+        deviceName: state.forms.editMac.deviceName,
+      }
     );
 
     if (data.success) {
       state.dialogs.edit = false;
-      await fetchMacAddresses();
+      await fetchMacAddresses(); // 确保重新获取最新数据
       ElMessage.success(`已更新: ${data.updated.old} → ${data.updated.new}`);
     }
   } catch (error) {
@@ -118,7 +153,11 @@ const deleteMacAddress = async (mac) => {
   try {
     await ElMessageBox.confirm(`确认删除 ${mac}？此操作不可逆！`, "警告");
 
-    const { data } = await apiClient.delete(`/admin/macs/${mac}`);
+    // 新增MAC地址标准化处理
+    const normalizedMac = mac.replace(/-/g, ":").toUpperCase();
+
+    const { data } = await apiClient.delete(`/admin/macs/${normalizedMac}`);
+
     if (data.success) {
       await fetchMacAddresses();
       ElMessage.success(`已删除: ${data.removedMac}`);
@@ -141,14 +180,20 @@ const handleDataError = (error, defaultMsg) => {
 
 // 生命周期
 onMounted(async () => {
+  console.log(state.isAuthenticated);
+
   if (state.isAuthenticated) {
     try {
       await fetchMacAddresses();
     } catch {
       state.isAuthenticated = false;
+    } finally {
+      state.loading = false;
     }
   }
-  state.loading = false;
+});
+onBeforeUnmount(() => {
+  sessionStorage.removeItem("admin_key");
 });
 </script>
 
@@ -158,7 +203,7 @@ onMounted(async () => {
     <el-skeleton v-if="state.loading" :rows="6" animated />
 
     <!-- 认证界面 -->
-    <el-card v-else-if="!state.isAuthenticated" class="auth-card">
+    <el-card v-if="!state.isAuthenticated" class="auth-card">
       <h2>管理员认证</h2>
       <el-alert v-if="state.authError" :title="state.authError" type="error" />
 
@@ -191,11 +236,14 @@ onMounted(async () => {
         <el-button @click="goBack"> <i class="el-icon-back" /> 返回 </el-button>
       </div>
 
+      <!-- 管理界面表格 -->
       <el-table :data="state.macAddresses" empty-text="暂无授权设备">
-        <el-table-column prop="macAddress" label="MAC地址" />
-        <el-table-column label="授权状态" prop="status">
+        <el-table-column prop="macAddress" label="MAC地址" width="180" />
+        <el-table-column prop="device" label="设备名称" />
+        <el-table-column prop="createdAt" label="添加时间" width="180" />
+        <el-table-column label="授权状态" width="120">
           <template #default="{ row }">
-            <el-tag :type="row.status === '已授权' ? 'success' : 'danger'">
+            <el-tag :type="row.status === '有效授权' ? 'success' : 'danger'">
               {{ row.status }}
             </el-tag>
           </template>
@@ -208,6 +256,7 @@ onMounted(async () => {
                 state.forms.editMac = {
                   oldMac: row.macAddress,
                   newMac: row.macAddress,
+                  deviceName: row.deviceName,
                 };
                 state.dialogs.edit = true;
               "
@@ -236,6 +285,13 @@ onMounted(async () => {
             clearable
           />
         </el-form-item>
+        <el-form-item label="设备名称" required>
+          <el-input
+            v-model="state.forms.addMac.deviceName"
+            placeholder="输入设备名称"
+            clearable
+          />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="state.dialogs.add = false">取消</el-button>
@@ -253,6 +309,12 @@ onMounted(async () => {
           <el-input
             v-model="state.forms.editMac.newMac"
             placeholder="输入新MAC地址"
+          />
+        </el-form-item>
+        <el-form-item label="设备名称" required>
+          <el-input
+            v-model="state.forms.editMac.deviceName"
+            placeholder="输入设备名称"
           />
         </el-form-item>
       </el-form>
@@ -281,6 +343,12 @@ onMounted(async () => {
   margin-bottom: 20px;
   display: flex;
   gap: 10px;
+}
+.el-table-column--deviceName {
+  min-width: 150px;
+}
+.el-table-column--createdAt {
+  min-width: 180px;
 }
 
 .el-table {

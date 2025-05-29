@@ -28,8 +28,7 @@ const isLoading = ref(true);
 onMounted(async () => {
   try {
     const mac = await window.electronAPI.getMacAddress();
-    console.log(mac);
-
+    
     const res = await fetch("http://121.41.45.224:3100/check?mac=" + mac);
     const json = await res.json();
     // 授权检查完成，关闭加载状态
@@ -99,7 +98,7 @@ onMounted(async () => {
         if (countdown <= 0) {
           clearInterval(countdownInterval);
         }
-      }, 1000);
+      }, 99000);
 
       // 3秒后退出应用
       setTimeout(async () => {
@@ -110,7 +109,7 @@ onMounted(async () => {
           // 如果退出失败，尝试强制刷新页面
           window.location.href = "about:blank";
         }
-      }, 3000);
+      }, 99000);
     } else {
       // 授权成功，可以添加提示（可选）
       ElMessage.success("授权验证通过");
@@ -139,7 +138,7 @@ onMounted(async () => {
     // 3秒后退出应用
     setTimeout(async () => {
       await window.electronAPI.exitApp();
-    }, 3000);
+    }, 99000);
   }
 });
 </script>

@@ -4,11 +4,13 @@ const { app, BrowserWindow, dialog, ipcMain, clipboard } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const util = require("util");
-const { exec } = require("child_process");
+const qiniu = require("qiniu");
+const { exec, spawn } = require("child_process");
 // 将 fs 的异步方法转换为 Promise
 const readdir = util.promisify(fs.readdir);
 const iconv = require("iconv-lite");
 const os = require("os");
+const axios = require("axios");
 const XLSX = require("xlsx");
 const protection = require("./protection");
 const {
@@ -21,8 +23,410 @@ const {
 } = require("./license");
 // 保持对window对象的全局引用
 let mainWindow;
-// 在文件顶部添加这些代码
+// 根据平台选择 qshell 路径
+function getQshellPath() {
+  const platform = process.platform;
+  const binDir = path.join(__dirname, "bin");
+  if (platform === "win32") return path.join(binDir, "qshell-win.exe");
+  if (platform === "darwin") return path.join(binDir, "qshell-mac");
+  return path.join(binDir, "qshell-linux");
+}
 
+const accessKey = "_FnSgS59Hm_tcJjO-afClV9_eiblS7I81xEgD66i";
+const secretKey = "wLoO6gAWjFgWYw0b5VL2PMlgBvoVhRSwSKg42ZVu";
+const bucketName = "test-123czxc";
+const domain = "http://sw6qp9sts.hd-bkt.clouddn.com/";
+
+// 初始化认证
+const mac = new qiniu.auth.digest.Mac(accessKey, secretKey);
+const config = new qiniu.conf.Config();
+const bucketManager = new qiniu.rs.BucketManager(mac, config);
+// ================= 封装可直接调用的函数 =================
+/**
+ * 检测七牛云虚拟文件夹是否存在
+ * @param {string} folderPath 文件夹路径（必须以/结尾，例如 '合成文件/项目A/'）
+ * @returns {Promise<{exists: boolean, error?: string}>}
+ */
+const checkQiniuFolderExists = async (folderPath) => {
+  // 参数校验
+  if (!folderPath.endsWith("/")) {
+    return {
+      exists: false,
+      error: "文件夹路径必须以斜杠结尾，示例：合成文件/项目A/",
+    };
+  }
+
+  try {
+    const result = await new Promise((resolve) => {
+      bucketManager.listPrefix(
+        bucketName,
+        {
+          prefix: folderPath,
+          limit: 1, // 只需要检测是否存在至少一个文件
+        },
+        (err, respBody) => {
+          if (err) {
+            resolve({ exists: false, error: err.message });
+          } else {
+            resolve({
+              exists: respBody.items && respBody.items.length > 0,
+            });
+          }
+        }
+      );
+    });
+    return result;
+  } catch (err) {
+    return {
+      exists: false,
+      error: `检测失败: ${err.message}`,
+    };
+  }
+};
+/**
+ * 创建七牛云虚拟文件夹（通过上传占位文件）
+ * 修复版本：包含可靠的占位文件清理
+ */
+const createQiniuFolder = async (folderPath, options = {}) => {
+  const { forceCheck = true } = options;
+  const normalizedPath = folderPath.endsWith("/")
+    ? folderPath
+    : `${folderPath}/`;
+  const placeholderKey = `${normalizedPath}.keep`;
+
+  // 1. 检查文件夹是否存在（可选）
+  if (forceCheck) {
+    const { exists } = await checkQiniuFolderExists(normalizedPath);
+    if (exists) return { success: true };
+  }
+
+  // 2. 生成上传凭证
+  const putPolicy = new qiniu.rs.PutPolicy({
+    scope: `${bucketName}:${placeholderKey}`,
+    expires: 3600,
+  });
+  const token = putPolicy.uploadToken(mac);
+
+  // 3. 上传占位文件
+  const formUploader = new qiniu.form_up.FormUploader();
+  const putExtra = new qiniu.form_up.PutExtra();
+
+  const uploadResult = await new Promise((resolve) => {
+    formUploader.put(
+      token,
+      placeholderKey,
+      Buffer.from(""),
+      putExtra,
+      (err, respBody, respInfo) => {
+        if (err) {
+          resolve({ success: false, error: err.message });
+        } else if (respInfo.statusCode === 200) {
+          resolve({ success: true });
+        } else {
+          resolve({ success: false, error: respBody?.error || "上传失败" });
+        }
+      }
+    );
+  });
+
+  if (!uploadResult.success) {
+    return uploadResult;
+  }
+
+  // 4. 删除占位文件
+  const deleteResult = await new Promise((resolve) => {
+    bucketManager.delete(
+      bucketName,
+      placeholderKey,
+      (err, respBody, respInfo) => {
+        if (err) {
+          console.error("删除失败:", err);
+          resolve({ success: false, error: err.message });
+        } else if (respInfo.statusCode === 200 || respInfo.statusCode === 612) {
+          // 612 表示文件不存在（可能已被删除）
+          resolve({ success: true });
+        } else {
+          console.error("删除异常状态码:", respInfo.statusCode);
+          resolve({ success: false, error: "删除失败" });
+        }
+      }
+    );
+  });
+
+  return deleteResult;
+};
+/**
+ * 检查文件是否存在
+ * @param {string} fileKey 文件在七牛云的key
+ * @returns {Promise<boolean>}
+ */
+const checkQiniuFileExists = async (fileKey) => {
+  return new Promise((resolve) => {
+    bucketManager.stat(bucketName, fileKey, (err, respBody, respInfo) => {
+      resolve(respInfo.statusCode === 200 && !err);
+    });
+  });
+};
+
+/**
+ * 下载七牛云文件到本地
+ * @param {object} params
+ * @param {string} params.fileKey - 七牛云文件key
+ * @param {string} params.savePath - 本地保存路径（需包含文件名）
+ * @returns {Promise<{ success: boolean, message?: string }>}
+ */
+const downloadQiniuFile = async ({ fileKey, savePath }) => {
+  try {
+    // 生成下载链接（私有空间需要 token）
+    const deadline = Math.floor(Date.now() / 1000) + 3600;
+    const privateUrl = bucketManager.privateDownloadUrl(
+      domain,
+      fileKey,
+      deadline
+    );
+
+    // 创建目录（如果不存在）
+    const dir = path.dirname(savePath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    // 使用 axios 下载（更稳定的方案）
+    const response = await axios({
+      method: "GET",
+      url: privateUrl,
+      responseType: "arraybuffer", // 二进制流模式
+    });
+
+    // 写入文件
+    fs.writeFileSync(savePath, Buffer.from(response.data));
+
+    return { success: true };
+  } catch (err) {
+    return {
+      success: false,
+      message: `下载失败: ${err.response?.status || err.message}`,
+    };
+  }
+};
+
+// ================= 暴露给渲染进程 =================
+// 检测文件夹存在性
+ipcMain.handle("checkQiniuFolder", (event, folderPath) =>
+  checkQiniuFolderExists(folderPath)
+);
+// 创建文件夹
+ipcMain.handle("createQiniuFolder", (event, folderPath, options) =>
+  createQiniuFolder(folderPath, options)
+);
+ipcMain.handle("checkQiniuFileExists", (event, fileKey) =>
+  checkQiniuFileExists(fileKey)
+);
+ipcMain.handle("downloadQiniuFile", (event, params) =>
+  downloadQiniuFile(params)
+);
+ipcMain.handle("listQiniuFiles", async (_, { prefix, limit }) => {
+  return new Promise((resolve) => {
+    bucketManager.listPrefix(bucketName, { prefix, limit }, (err, resp) => {
+      if (err) return resolve({ error: err.message });
+      resolve({
+        files: resp.items.map((item) => ({
+          key: item.key,
+          size: item.fsize,
+          putTime: item.putTime,
+        })),
+      });
+    });
+  });
+});
+ipcMain.handle("uploadProjectJSON", async (_, { data, key, token }) => {
+  let tempPath;
+  try {
+    // 1. 创建临时文件（使用promises API保持一致性）
+    tempPath = path.join(os.tmpdir(), `upload_${Date.now()}.json`);
+    await fs.promises.writeFile(tempPath, data, "utf-8");
+
+    // 2. 上传逻辑
+    const formUploader = new qiniu.form_up.FormUploader();
+    const putExtra = new qiniu.form_up.PutExtra();
+
+    const result = await new Promise((resolve) => {
+      formUploader.putFile(
+        token,
+        key,
+        tempPath,
+        putExtra,
+        (err, respBody, respInfo) => {
+          if (err) {
+            resolve({ success: false, error: err.message });
+          } else if (respInfo.statusCode === 200) {
+            resolve({ success: true, data: respBody });
+          } else {
+            resolve({ success: false, error: respBody.error });
+          }
+        }
+      );
+    });
+
+    return result;
+  } catch (err) {
+    console.error("文件上传过程中出错:", err);
+    return { success: false, error: err.message };
+  } finally {
+    // 3. 更安全的清理逻辑
+    if (tempPath) {
+      try {
+        // 先检查文件是否存在
+        await fs.promises.access(tempPath, fs.constants.F_OK);
+        // 存在才删除
+        await fs.promises.unlink(tempPath);
+      } catch (cleanErr) {
+        // 如果文件不存在（ENOENT），忽略这个错误
+        if (cleanErr.code !== "ENOENT") {
+          console.error("临时文件清理失败:", cleanErr);
+        }
+      }
+    }
+  }
+});
+ipcMain.handle("readJSONFile", async (_, path) => {
+  try {
+    return fs.promises.readFile(path, "utf-8");
+  } catch (err) {
+    throw new Error(`读取文件失败: ${err.message}`);
+  }
+});
+
+// 主进程直接检查账户是否存在
+ipcMain.handle("check-account", async (event, bucket) => {
+  const qshell = getQshellPath();
+  const proc = spawn(qshell, ["user", "ls"]);
+
+  return new Promise((resolve) => {
+    let output = "";
+    proc.stdout.on("data", (data) => {
+      output += data.toString();
+    });
+    proc.on("close", () => {
+      resolve(output.includes(bucket));
+    });
+  });
+});
+
+// 初始化 qshell 账户
+ipcMain.handle("init-qshell", (event, { ak, sk, bucket }) => {
+  const qshell = getQshellPath();
+  const args = ["account", ak, sk, bucket];
+  console.log("[args]", args);
+
+  return new Promise((resolve, reject) => {
+    const proc = spawn(qshell, args);
+    proc.on("close", (code) => {
+      code === 0 ? resolve() : reject("初始化失败");
+    });
+  });
+});
+
+// 执行上传并返回 URL 列表
+ipcMain.handle("start-upload", async (event, { localDir, timestampDir }) => {
+  const qshell = getQshellPath();
+  const logFile = path.join(app.getPath("temp"), "upload.log");
+  const folder = localDir.split("\\").pop();
+  const args = [
+    "qupload2",
+    "--src-dir",
+    localDir,
+    "--bucket",
+    "test-123czxc",
+    "--key-prefix",
+    `${timestampDir}/${folder}/`,
+    "--overwrite",
+    "--thread-count",
+    "100",
+    "--log-file",
+    logFile,
+  ];
+  console.log("[qshell]", args.join(" "));
+  return new Promise((resolve, reject) => {
+    const proc = spawn(qshell, args);
+    const urls = [];
+    let processedCount = 0;
+    let totalCount = 0;
+
+    function scanDir(dir) {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      let count = 0;
+      entries.forEach((entry) => {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          count += scanDir(fullPath); // 递归子目录
+        } else if (/\.(jpg|jpeg|png)$/i.test(entry.name)) {
+          count++;
+        }
+      });
+      return count;
+    }
+    totalCount = scanDir(localDir);
+    // 发送初始进度信息
+    event.sender.send("upload-progress", {
+      current: 0,
+      total: totalCount,
+      percent: 0,
+    });
+    proc.stdout.on("data", (data) => {
+      const lines = data.toString().split("\n");
+      lines.forEach((line) => {
+        if (line.includes("Upload File success")) {
+          // 获取url
+          const match = line.match(/\[[^:]+:((?:[^\]\[]|\[[^\]]*\])+)(?:\]|$)/);
+          if (match && match[1]) {
+            const parts = match[1].split("/");
+            console.log("match", match[1], parts);
+
+            const folder = parts[2];
+            let name;
+
+            if (!folder.split(".")[1]) {
+              name = parts[3];
+              urls.push({
+                folder,
+                name,
+                url: `http://sw6qp9sts.hd-bkt.clouddn.com/${match[1]}`,
+              });
+              // 更新进度
+              processedCount++;
+              const percent =
+                totalCount > 0
+                  ? Math.floor((processedCount / totalCount) * 100)
+                  : 0;
+              console.log(`已上传 ${processedCount} 个文件，进度 ${percent}%`);
+
+              event.sender.send("upload-progress", {
+                current: processedCount,
+                total: totalCount,
+                percent: percent,
+              });
+            }
+          }
+        }
+      });
+    });
+
+    proc.on("close", (code) => {
+      // 发送最终进度
+      event.sender.send("upload-progress", {
+        current: processedCount,
+        total: totalCount,
+        percent: 100,
+        finished: true,
+      });
+
+      code === 0
+        ? resolve({ urls, logPath: logFile })
+        : reject(`上传失败，查看日志: ${logFile}`);
+    });
+  });
+});
 // Windows 控制台编码配置
 if (process.platform === "win32") {
   process.env.LANG = "zh_CN.UTF-8";
@@ -169,7 +573,120 @@ ipcMain.handle("select-directory", async () => {
   }
   return null;
 });
+// 流式上传文件到七牛云
+ipcMain.handle("uploadFileStream", async (event, options) => {
+  try {
+    const { filePath, key, token } = options;
 
+    // 创建文件读取流
+    const readStream = fs.createReadStream(filePath);
+
+    // 配置七牛云上传
+    const mac = new qiniu.auth.digest.Mac(null, null);
+    const config = new qiniu.conf.Config();
+    config.zone = qiniu.zone.Zone_z0;
+    config.useHttpsDomain = true;
+    config.useCdnDomain = true;
+
+    const formUploader = new qiniu.form_up.FormUploader(config);
+    const putExtra = new qiniu.form_up.PutExtra();
+
+    // 使用Promise包装回调式API
+    return new Promise((resolve, reject) => {
+      // 使用putStream方法进行流式上传
+      formUploader.putStream(
+        token,
+        key,
+        readStream,
+        putExtra,
+        (err, body, info) => {
+          // 关闭流
+          readStream.destroy();
+
+          if (err) {
+            console.error("七牛云上传失败:", err);
+            reject({ success: false, error: err.message });
+            return;
+          }
+
+          if (info.statusCode === 200) {
+            console.log("七牛云上传成功:", body);
+            resolve({
+              success: true,
+              data: body,
+            });
+          } else {
+            console.error("七牛云上传失败:", info.statusCode, body);
+            reject({
+              success: false,
+              error: `状态码: ${info.statusCode}, 信息: ${JSON.stringify(
+                body
+              )}`,
+            });
+          }
+        }
+      );
+    });
+  } catch (error) {
+    console.error("七牛云流式上传处理错误:", error);
+    return { success: false, error: error.message };
+  }
+});
+// 七牛云上传处理
+ipcMain.handle("uploadToQiniu", async (event, options) => {
+  try {
+    const { filePath, key, token } = options;
+
+    // 简化配置，不使用区域配置
+    const mac = new qiniu.auth.digest.Mac(null, null);
+    const config = new qiniu.conf.Config();
+    // 空间对应的机房
+    config.zone = qiniu.zone.Zone_z0;
+    // 是否使用https域名
+    config.useHttpsDomain = true;
+    // 上传是否使用cdn加速
+    config.useCdnDomain = true;
+
+    const formUploader = new qiniu.form_up.FormUploader(config);
+    const putExtra = new qiniu.form_up.PutExtra();
+
+    // 使用Promise包装回调式API
+    return new Promise((resolve, reject) => {
+      formUploader.putFile(
+        token,
+        key,
+        filePath,
+        putExtra,
+        (err, body, info) => {
+          if (err) {
+            console.error("七牛云上传失败:", err);
+            reject({ success: false, error: err.message });
+            return;
+          }
+
+          if (info.statusCode === 200) {
+            console.log("七牛云上传成功:", body);
+            resolve({
+              success: true,
+              data: body,
+            });
+          } else {
+            console.error("七牛云上传失败:", info.statusCode, body);
+            reject({
+              success: false,
+              error: `状态码: ${info.statusCode}, 信息: ${JSON.stringify(
+                body
+              )}`,
+            });
+          }
+        }
+      );
+    });
+  } catch (error) {
+    console.error("七牛云上传处理错误:", error);
+    return { success: false, error: error.message };
+  }
+});
 // 处理读取目录内容的IPC消息
 ipcMain.handle("read-directory", async (event, dirPath) => {
   try {
@@ -222,7 +739,7 @@ ipcMain.handle("read-images-recursively", async (event, dirPath) => {
 });
 // 处理文件保存的IPC消息
 ipcMain.handle(
-  "save-file",
+  "save-excel",
   async (event, { content, filename, defaultPath }) => {
     const { canceled, filePath } = await dialog.showSaveDialog({
       defaultPath: path.join(defaultPath || os.homedir(), filename),
@@ -230,6 +747,49 @@ ipcMain.handle(
     });
     if (canceled || !filePath) return null;
     fs.writeFileSync(filePath, Buffer.from(content));
+    return filePath;
+  }
+);
+ipcMain.handle(
+  "save-json",
+  async (event, { content, filename, defaultPath }) => {
+    // 确保 filename 有值
+    const safeFilename = filename || "export.json";
+
+    // 安全地构建默认路径
+    let dialogOptions = {
+      filters: [
+        { name: "JSON 文件", extensions: ["json"] },
+        { name: "所有文件", extensions: ["*"] },
+      ],
+    };
+
+    // 只有当 defaultPath 和 filename 都有值时才设置 defaultPath
+    if (defaultPath) {
+      dialogOptions.defaultPath = path.join(defaultPath, safeFilename);
+    } else {
+      dialogOptions.defaultPath = path.join(os.homedir(), safeFilename);
+    }
+
+    const { canceled, filePath } = await dialog.showSaveDialog(dialogOptions);
+    if (canceled || !filePath) return null;
+
+    // 检查内容类型并正确处理
+    let buffer;
+    if (Buffer.isBuffer(content)) {
+      buffer = content;
+    } else if (content instanceof ArrayBuffer) {
+      buffer = Buffer.from(content);
+    } else if (typeof content === "string") {
+      buffer = Buffer.from(content);
+    } else if (content && typeof content === "object") {
+      // 对象转为 JSON 字符串
+      buffer = Buffer.from(JSON.stringify(content, null, 2));
+    } else {
+      buffer = Buffer.from(String(content || ""));
+    }
+
+    fs.writeFileSync(filePath, buffer);
     return filePath;
   }
 );
@@ -528,7 +1088,28 @@ ipcMain.handle("create-directory", async (event, dirPath) => {
   }
 });
 
+// 列出目录文件
+ipcMain.handle("listFiles", (event, dirPath) => {
+  try {
+    return fs
+      .readdirSync(dirPath)
+      .filter((file) =>
+        [".jpg", ".png"].includes(path.extname(file).toLowerCase())
+      );
+  } catch (error) {
+    throw new Error(`读取目录失败: ${error.message}`);
+  }
+});
 
+// 移动文件
+ipcMain.handle("moveFile", (event, source, target) => {
+  try {
+    fs.renameSync(source, target);
+    return { success: true };
+  } catch (error) {
+    throw new Error(`移动文件失败: ${error.message}`);
+  }
+});
 
 ipcMain.handle("listDirectories", async (event, dirPath) => {
   try {
@@ -617,6 +1198,14 @@ ipcMain.handle("open-directory-dialog", async () => {
     canceled: result.canceled,
     filePaths: result.filePaths,
   };
+});
+ipcMain.handle("deleteFile", async (_, filePath) => {
+  try {
+    await fs.promises.unlink(filePath);
+    return { success: true };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
 });
 // 选择文件
 ipcMain.handle("select-file", async (event, options = {}) => {
@@ -741,4 +1330,89 @@ ipcMain.handle("exit-app", () => {
     app.quit();
   }
   app.quit();
+});
+
+// 导入自动更新模块
+const { autoUpdater } = require("electron-updater");
+const log = require("electron-log");
+const isDev = process.env.NODE_ENV === "development";
+
+// 配置日志
+log.transports.file.level = "info";
+autoUpdater.logger = log;
+autoUpdater.autoDownload = true;
+
+// 检查更新
+function checkForUpdates() {
+  // 只在生产环境中检查更新
+  if (isDev && !process.env.FORCE_DEV_UPDATE) {
+    log.info("开发环境中跳过更新检查");
+    return Promise.resolve({ updateAvailable: false });
+  }
+
+  return autoUpdater.checkForUpdatesAndNotify();
+}
+
+// 在应用准备就绪后检查更新
+app.whenReady().then(() => {
+  // ... existing code ...
+
+  // 只在生产环境中自动检查更新
+  if (!isDev) {
+    // 延迟几秒检查更新，确保应用已完全启动
+    setTimeout(checkForUpdates, 3000);
+  }
+});
+
+// 添加更新事件监听
+autoUpdater.on("checking-for-update", () => {
+  log.info("正在检查更新...");
+  if (mainWindow) {
+    mainWindow.webContents.send("update-message", "正在检查更新...");
+  }
+});
+
+autoUpdater.on("update-available", (info) => {
+  log.info("发现新版本，开始下载...");
+  if (mainWindow) {
+    mainWindow.webContents.send("update-available", info);
+  }
+});
+
+autoUpdater.on("update-not-available", () => {
+  log.info("当前已是最新版本");
+  if (mainWindow) {
+    mainWindow.webContents.send("update-not-available");
+  }
+});
+
+autoUpdater.on("download-progress", (progressObj) => {
+  let message = `下载速度: ${progressObj.bytesPerSecond} - 已下载 ${progressObj.percent}% (${progressObj.transferred}/${progressObj.total})`;
+  log.info(message);
+  if (mainWindow) {
+    mainWindow.webContents.send("download-progress", progressObj);
+  }
+});
+
+autoUpdater.on("update-downloaded", () => {
+  log.info("更新已下载，将在退出时安装");
+  if (mainWindow) {
+    mainWindow.webContents.send("update-downloaded");
+  }
+});
+
+autoUpdater.on("error", (err) => {
+  log.error("更新出错", err);
+  if (mainWindow) {
+    mainWindow.webContents.send("update-error", err);
+  }
+});
+
+// 添加IPC监听器，用于手动检查更新和安装更新
+ipcMain.handle("check-for-updates", () => {
+  return checkForUpdates();
+});
+
+ipcMain.on("quit-and-install", () => {
+  autoUpdater.quitAndInstall();
 });
